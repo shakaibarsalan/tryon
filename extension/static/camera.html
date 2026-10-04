@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%BRAND_NAME% · Camera</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/camera.css">
+  <script src="camera.js" defer></script>
+</head>
+<body>
+<main class="camera-page">
+  <header class="brand-row">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--brand)"/><path d="M16 8.6a2.6 2.6 0 1 1 2.6 2.6c-.9 0-1.6.6-1.6 1.5v.8l7.6 5.4c1 .7.5 2.3-.7 2.3H8.1c-1.2 0-1.7-1.6-.7-2.3L15 13.5" fill="none" stroke="var(--on-brand)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M24.5 5.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z" fill="var(--gold)"/></svg>
+    <span>%BRAND_NAME%</span>
+  </header>
+
+  <h1>Take your try-on photo</h1>
+  <p class="lead">Chrome asks for camera access once, here in a normal tab. After that, the fitting room in the side panel can use your camera directly.</p>
+
+  <section id="cam-start" class="card">
+    <ul class="tips">
+      <li>Full body or waist-up, facing the camera</li>
+      <li>Good, even light</li>
+      <li>Plain background</li>
+      <li>Only you in the photo</li>
+    </ul>
+    <button type="button" id="cam-enable" class="btn primary">Turn on camera</button>
+    <p id="cam-error" class="notice error" role="alert" hidden></p>
+    <button type="button" id="cam-settings" class="btn ghost" hidden>Open camera settings</button>
+  </section>
+
+  <section id="cam-root" class="card" hidden></section>
+
+  <section id="cam-done" class="card done" hidden>
+    <h2>Photo saved</h2>
+    <p>Go back to the fitting room in the side panel. This tab closes by itself.</p>
+    <button type="button" id="cam-close" class="btn primary">Close this tab</button>
+  </section>
+
+  <p class="fine">Your photo is saved only in this browser. Nothing is uploaded until you press "Try it on".</p>
+</main>
+</body>
+</html>

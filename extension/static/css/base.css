@@ -1,0 +1,157 @@
+/* Shared tokens and components for extension pages (side panel, camera tab, dev harness). */
+:root {
+  color-scheme: light dark;
+  --brand: #3b1f4a;
+  --brand-2: #5a3470;
+  --on-brand: #fbf7f0;
+  --gold: #d9a441;
+  --bg: #fbf7f0;
+  --surface: #ffffff;
+  --surface-2: #f4ece0;
+  --border: #e6dccb;
+  --text: #2a1d30;
+  --muted: #6f6375;
+  --accent-soft: #efe4f2;
+  --danger: #b3261e;
+  --danger-soft: #fbe9e7;
+  --warn-soft: #fbf1dc;
+  --ok: #2e7d4f;
+  --focus: #d9a441;
+  --shadow: 0 1px 2px rgba(42, 29, 48, 0.06), 0 4px 16px rgba(42, 29, 48, 0.06);
+  --radius: 14px;
+  --radius-sm: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand: #d9b8e6;
+    --brand-2: #e8d2f0;
+    --on-brand: #2a1630;
+    --bg: #1b141f;
+    --surface: #251b2a;
+    --surface-2: #2f2335;
+    --border: #3d3045;
+    --text: #f3ece4;
+    --muted: #b5a9b8;
+    --accent-soft: #33243c;
+    --danger: #ff8a80;
+    --danger-soft: #3a1f22;
+    --warn-soft: #3a3020;
+    --ok: #7fd1a1;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3 { margin: 0 0 6px; line-height: 1.2; letter-spacing: -0.01em; }
+h1 { font-size: 22px; font-weight: 700; }
+h2 { font-size: 18px; font-weight: 700; }
+h3 { font-size: 14px; font-weight: 650; }
+p { margin: 0 0 8px; }
+a { color: var(--brand-2); }
+@media (prefers-color-scheme: light) { a { color: var(--brand); } }
+img { max-width: 100%; display: block; }
+[hidden] { display: none !important; }
+
+.muted { color: var(--muted); }
+.fine { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.lead { font-size: 15px; color: var(--muted); }
+.row { display: flex; gap: 8px; }
+.row > * { flex: 1; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  box-shadow: var(--shadow);
+}
+.card-title { font-weight: 650; margin-bottom: 10px; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 38px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface); color: var(--text);
+  font: 600 14px/1 var(--font); cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 80ms ease, opacity 120ms ease;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn:focus-visible, .link:focus-visible, select:focus-visible, input:focus-visible + .track, .check input:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--on-brand); }
+.btn.primary:hover:not(:disabled) { background: var(--brand-2); border-color: var(--brand-2); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
+.btn.danger { color: var(--danger); }
+.btn.block { display: flex; width: 100%; }
+.btn.small { min-height: 30px; padding: 0 12px; font-size: 13px; }
+.btn.xl { min-height: 48px; font-size: 16px; }
+.btn svg { width: 16px; height: 16px; flex: none; }
+.btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--brand); }
+
+.link {
+  background: none; border: 0; padding: 0; margin: 0;
+  color: var(--brand); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (prefers-color-scheme: dark) { .link { color: var(--brand-2); } }
+.link.small { font-size: 12px; }
+
+.icon-btn {
+  width: 32px; height: 32px; border-radius: 999px; border: 0;
+  background: rgba(20, 10, 26, 0.55); color: #fff; font: 20px/1 var(--font); cursor: pointer;
+}
+
+/* Checkboxes */
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; accent-color: var(--brand); }
+
+/* Notices */
+.notice { font-size: 13px; border-radius: var(--radius-sm); padding: 8px 10px; margin: 8px 0 0; background: var(--surface-2); }
+.notice.error { background: var(--danger-soft); color: var(--danger); }
+.notice.warn { background: var(--warn-soft); }
+
+.tips { margin: 10px 0 14px; padding: 0; list-style: none; display: grid; gap: 6px; }
+.tips li { position: relative; padding-left: 22px; }
+.tips li::before {
+  content: ""; position: absolute; left: 2px; top: 5px; width: 10px; height: 6px;
+  border-left: 2px solid var(--ok); border-bottom: 2px solid var(--ok); transform: rotate(-45deg);
+}
+
+.spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid var(--accent-soft); border-top-color: var(--brand);
+  animation: spin 0.9s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Camera capture component */
+.cam { display: grid; gap: 10px; }
+.cam-stage {
+  position: relative; width: 100%; aspect-ratio: 3 / 4; overflow: hidden;
+  border-radius: var(--radius); background: #120c15;
+}
+.cam-video, .cam-still { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cam-video { transform: scaleX(-1); }
+.cam-guide { position: absolute; inset: 6% 12% 0; width: 76%; height: 94%; color: #fbf7f0; pointer-events: none; }
+.cam-still:not([hidden]) ~ .cam-guide { display: none; }
+.cam-count {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 800 72px/1 var(--font); color: #fff; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.5);
+}
+.cam-msg { font-size: 13px; color: var(--muted); margin: 0; min-height: 1.4em; }
+.cam-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.cam-actions .btn { flex: 1 1 auto; }

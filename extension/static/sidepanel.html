@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%BRAND_NAME%</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/panel.css">
+  <script src="sidepanel.js" defer></script>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--brand)"/><path d="M16 8.6a2.6 2.6 0 1 1 2.6 2.6c-.9 0-1.6.6-1.6 1.5v.8l7.6 5.4c1 .7.5 2.3-.7 2.3H8.1c-1.2 0-1.7-1.6-.7-2.3L15 13.5" fill="none" stroke="var(--on-brand)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M24.5 5.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z" fill="var(--gold)"/></svg>
+      <span class="brand-name">%BRAND_NAME%</span>
+    </div>
+    <span class="quota" id="quota" hidden></span>
+  </header>
+
+  <main class="screens">
+    <!-- Consent (first run) -->
+    <section id="screen-consent" class="screen" hidden>
+      <div class="hero">
+        <h1>See it on you before you buy</h1>
+        <p class="lead">Pick clothes on any store, add one photo of yourself, and our AI makes a picture of you wearing them.</p>
+      </div>
+      <ul class="facts">
+        <li><span class="dot"></span><span><strong>Your photo is saved in this browser.</strong> It is sent to our AI provider only when you press "Try it on", and deleted there within an hour.</span></li>
+        <li><span class="dot"></span><span><strong>No account, no tracking.</strong> We don't collect your browsing history.</span></li>
+        <li><span class="dot"></span><span><strong>Free try-ons</strong> to start, no card needed.</span></li>
+      </ul>
+      <form id="consent-form" class="card consent" novalidate>
+        <p class="card-title">Before you start</p>
+        <label class="check"><input type="checkbox" name="age" required><span>I'm 18 or older</span></label>
+        <label class="check"><input type="checkbox" name="provider" required><span>My photo and the garment image are sent to our AI provider to create the try-on image; the provider deletes them within 1 hour and does not train on them</span></label>
+        <label class="check"><input type="checkbox" name="local" required><span>Results are stored only in this browser; I can delete them any time</span></label>
+        <button type="submit" class="btn primary block" id="consent-accept" disabled>Agree and continue</button>
+        <p class="fine">See our <a href="#" data-link="privacy">Privacy notice</a> and <a href="#" data-link="terms">Terms</a>.</p>
+      </form>
+    </section>
+
+    <!-- Your photo -->
+    <section id="screen-photo" class="screen" hidden>
+      <button type="button" class="back link" id="photo-back" hidden>&larr; Back to fitting room</button>
+      <h2>Your photo</h2>
+      <p class="muted">One photo is all we need. It's saved only in this browser.</p>
+
+      <div id="photo-saved" class="photo-saved" hidden>
+        <img id="photo-img" alt="Your saved photo">
+        <div class="row">
+          <button type="button" id="photo-retake" class="btn">Retake</button>
+          <button type="button" id="photo-delete" class="btn ghost danger">Delete</button>
+        </div>
+        <button type="button" id="photo-continue" class="btn primary block">Continue to fitting room</button>
+      </div>
+
+      <div id="photo-empty">
+        <ul class="tips">
+          <li>Full body or waist-up, facing the camera</li>
+          <li>Good, even light</li>
+          <li>Plain background</li>
+          <li>Only you in the photo</li>
+          <li>Fitted clothes show your shape best</li>
+        </ul>
+        <button type="button" id="photo-take" class="btn primary block">Take a photo</button>
+        <button type="button" id="photo-upload" class="btn block">Upload a photo</button>
+        <input type="file" id="photo-file" accept="image/jpeg,image/png,image/webp" hidden>
+        <p class="fine">Upload is a convenience in this preview build. The public free version will use the camera only.</p>
+      </div>
+
+      <div id="camera-inline" class="camera-inline" hidden></div>
+      <p id="photo-status" class="status" role="status" hidden></p>
+    </section>
+
+    <!-- Fitting room -->
+    <section id="screen-room" class="screen" hidden>
+      <div class="me-row">
+        <img id="me-thumb" class="me-thumb" alt="">
+        <div class="me-text">
+          <span class="me-label">Your photo</span>
+          <button type="button" id="me-change" class="link">Change</button>
+        </div>
+      </div>
+
+      <div class="chips-row">
+        <label class="switch">
+          <input type="checkbox" id="chips-toggle" role="switch">
+          <span class="track" aria-hidden="true"></span>
+          <span>Try-On buttons on this page</span>
+        </label>
+        <p id="chips-status" class="fine" hidden></p>
+      </div>
+
+      <div id="garment-empty" class="dropzone">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 11a4 4 0 1 1 4 4c-1.4 0-2.5 1-2.5 2.3V19l12 8.6c1.6 1.1.8 3.6-1.1 3.6H11.6c-1.9 0-2.7-2.5-1.1-3.6L22.5 19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Drag a product image here</strong>
+        <span>or right-click any product image and choose <em>Try this on</em></span>
+        <button type="button" id="garment-upload" class="btn small">Upload garment</button>
+      </div>
+      <input type="file" id="garment-file" accept="image/*" hidden>
+
+      <article id="garment-card" class="garment card" hidden>
+        <div class="garment-media">
+          <img id="garment-img" alt="Selected garment">
+          <div class="garment-loading" id="garment-loading" hidden><span class="spinner"></span></div>
+        </div>
+        <div class="garment-info">
+          <p class="garment-title" id="garment-title"></p>
+          <p class="garment-site" id="garment-site"></p>
+          <label class="field">
+            <span>Type</span>
+            <select id="garment-category">
+              <option value="auto">Auto-detect</option>
+              <option value="tops">Top</option>
+              <option value="bottoms">Bottom</option>
+              <option value="one-pieces">Dress or full outfit</option>
+            </select>
+          </label>
+          <p class="notice warn" id="garment-unsupported" hidden>This item type isn't supported yet. <button type="button" class="link" id="garment-override">It's clothing</button></p>
+          <p class="notice" id="garment-note" hidden></p>
+          <p class="notice error" id="garment-error" hidden></p>
+          <button type="button" class="btn small" id="garment-permission" hidden></button>
+          <button type="button" class="link small" id="garment-replace">Use another image</button>
+        </div>
+      </article>
+
+      <button type="button" id="try-btn" class="btn primary block xl">Try it on</button>
+      <div id="progress" class="progress" hidden>
+        <div class="progress-bar"><span></span></div>
+        <span id="progress-text">Uploading…</span>
+      </div>
+      <p id="try-error" class="notice error" role="alert" hidden></p>
+
+      <section id="result" class="result" hidden>
+        <div class="result-media">
+          <img id="result-img" alt="You wearing the selected garment">
+          <button type="button" class="icon-btn result-close" id="result-close" aria-label="Close result">&times;</button>
+        </div>
+        <p class="result-meta" id="result-meta"></p>
+        <div class="result-actions">
+          <button type="button" id="fb-keep" class="btn" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 11v9H4v-9h3zm2 9V10.5L13.2 4c.9 0 1.8.8 1.8 1.9 0 .3 0 .5-.1.8L14 10h5.2c1.1 0 2 .9 2 2l-.1.5-2.3 6.3c-.3.7-1 1.2-1.8 1.2H9z" fill="currentColor"/></svg>
+            Keep
+          </button>
+          <button type="button" id="fb-no" class="btn" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 13V4h3v9h-3zm-2-9v9.5L10.8 20c-.9 0-1.8-.8-1.8-1.9 0-.3 0-.5.1-.8L10 14H4.8c-1.1 0-2-.9-2-2l.1-.5 2.3-6.3C5.5 4.5 6.2 4 7 4h8z" fill="currentColor"/></svg>
+            Not right
+          </button>
+          <button type="button" id="result-download" class="btn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0l-4.5-4.5M12 14l4.5-4.5M4 17v3h16v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Download
+          </button>
+        </div>
+      </section>
+
+      <section class="history">
+        <div class="history-head">
+          <h3>Your looks</h3>
+          <span id="history-count" class="fine"></span>
+        </div>
+        <div id="history-grid" class="grid"></div>
+        <p id="history-empty" class="fine">Your try-ons appear here. They're saved only in this browser.</p>
+      </section>
+
+      <section class="privacy">
+        <button type="button" id="delete-all" class="btn ghost danger small">Delete all my data</button>
+        <p class="fine">Removes your photo, results, install key and consent from this browser.</p>
+      </section>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>AI can make mistakes</span>
+    <span aria-hidden="true">·</span>
+    <a href="#" data-link="privacy">Privacy</a>
+    <span aria-hidden="true">·</span>
+    <a href="#" data-link="terms">Terms</a>
+  </footer>
+
+  <div class="drop-overlay" id="drop-overlay" hidden><div>Drop to try it on</div></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+</body>
+</html>
