@@ -1,0 +1,17 @@
+[
+  { "name": "Gul Ahmed", "country": "PK", "productUrl": "https://www.gulahmedshop.com/products/dyed-jacquard-shirt-gls-23-50" },
+  { "name": "J. (Junaid Jamshed)", "country": "PK", "productUrl": "https://www.junaidjamshed.com/products/black-oversized-asymmetrical-shirt-wtop-25-0004-c" },
+  { "name": "Outfitters", "country": "PK", "productUrl": "https://outfitters.com.pk/products/f1136-203" },
+  { "name": "Limelight", "country": "PK", "productUrl": "https://www.limelight.pk/products/a7153st-xsl-489" },
+  { "name": "Alkaram", "country": "PK", "productUrl": "https://www.alkaramstudio.com/products/stitched-printed-cambric-kurta-gfku7378-dark-blue" },
+  { "name": "Revolve", "country": "US", "productUrl": "https://www.revolve.com/runaway-the-label-dawn-scoop-neck-mini-dress-in-black/dp/RUNR-WD414/" },
+  { "name": "ASOS", "country": "GB", "productUrl": "https://www.asos.com/asos-design/asos-design-pleated-cami-midi-dress-with-drawstring-waist-in-navy/prd/204252646" },
+  { "name": "Zara", "country": "ES", "productUrl": "https://www.zara.com/us/en/satin-midi-halter-dress-p04772386.html" },
+  { "name": "H&M", "country": "SE", "productUrl": "https://www2.hm.com/en_us/productpage.1281955001.html" },
+  { "name": "Uniqlo", "country": "JP", "productUrl": "https://www.uniqlo.com/us/en/products/E475649-000/00" },
+  { "name": "Mango", "country": "ES", "productUrl": "https://shop.mango.com/us/en/p/women/dresses-and-jumpsuits/dresses/short-shirt-dress_17081159" },
+  { "name": "Nordstrom", "country": "US", "productUrl": "https://www.nordstrom.com/s/sorrel-floral-midi-dress/8859306" },
+  { "name": "AllSaints", "country": "GB", "productUrl": "https://www.allsaints.com/us/womenswear/spark-2-in-1-maxi-dress/USW082DB-9363.html" },
+  { "name": "Gymshark", "country": "GB", "productUrl": "https://www.gymshark.com/products/gymshark-fit-leggings-black-white" },
+  { "name": "Pangaia (Shopify DTC)", "country": "GB", "productUrl": "https://pangaia.com/products/womens-wool-jersey-trousers-black" }
+]

@@ -1,0 +1,10 @@
+{
+  "persons": [
+    { "id": "p01", "file": "images/persons/p01.jpg", "tags": ["female", "medium-skin", "waist-up"] },
+    { "id": "p02", "file": "images/persons/p02.jpg", "tags": ["male", "dark-skin", "full-body"] }
+  ],
+  "garments": [
+    { "id": "g01", "file": "images/garments/g01.jpg", "category": "tops", "tags": ["desi", "kurta", "on-model"] },
+    { "id": "g02", "file": "images/garments/g02.jpg", "category": "one-pieces", "tags": ["dress", "flat-lay", "pattern"] }
+  ]
+}
