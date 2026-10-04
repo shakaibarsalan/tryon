@@ -1,0 +1,13 @@
+{
+  "name": "@tryon/api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": { "@tryon/shared": "0.1.0" },
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "migrate:local": "wrangler d1 migrations apply tryon-dev --local",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

@@ -1,0 +1,12 @@
+# Copy to .dev.vars for `wrangler dev` (git-ignored). Never commit real values.
+# In production set each one with `wrangler secret put <NAME> --env production`.
+
+# Signs install tokens and hashes client IPs. Required in production.
+# Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+INSTALL_TOKEN_SECRET=
+
+# Only needed when PROVIDER=fashn.
+FASHN_API_KEY=
+
+# Optional, PROVIDER=hf-space only: a free Hugging Face read token for more ZeroGPU quota.
+HF_TOKEN=

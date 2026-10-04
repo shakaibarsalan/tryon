@@ -1,0 +1,39 @@
+# Try-On API (Cloudflare Worker). Local dev: see README.md.
+# Secrets (FASHN_API_KEY, HF_TOKEN, INSTALL_TOKEN_SECRET) are never in this file:
+# use `.dev.vars` locally (see .dev.vars.example) and `wrangler secret put` when deploying.
+name = "tryon-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-25"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tryon-dev"
+database_id = "00000000-0000-0000-0000-000000000000" # placeholder, fine for --local
+migrations_dir = "migrations"
+
+[vars]
+ENVIRONMENT = "development"
+PROVIDER = "mock" # mock | fashn | hf-space (hf-space is dev only)
+DAILY_BUDGET_USD = "5"
+FREE_RENDERS_PER_INSTALL = "3"
+IP_DAILY_LIMIT = "20"
+FASHN_MODE = "balanced" # performance | balanced | quality
+ALLOWED_ORIGINS = "chrome-extension://*,http://localhost:*,http://127.0.0.1:*"
+
+# Production is a separate environment so ENVIRONMENT=production is always set there
+# (that disables the dev token-secret fallback and the hf-space provider).
+# Deploying needs a real database_id; nothing here is deployed by default.
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "tryon-prod"
+database_id = "00000000-0000-0000-0000-000000000000" # placeholder until the prod D1 exists
+migrations_dir = "migrations"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+PROVIDER = "fashn"
+DAILY_BUDGET_USD = "5"
+FREE_RENDERS_PER_INSTALL = "3"
+IP_DAILY_LIMIT = "20"
+FASHN_MODE = "balanced"
+ALLOWED_ORIGINS = "chrome-extension://*"
