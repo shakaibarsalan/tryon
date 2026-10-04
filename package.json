@@ -1,0 +1,26 @@
+{
+  "name": "tryon",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Try-On: extension, store widget and Try-On API",
+  "workspaces": [
+    "packages/shared",
+    "packages/detector",
+    "api",
+    "extension"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260926.1",
+    "@types/chrome": "0.3.0",
+    "esbuild": "0.28.2",
+    "happy-dom": "20.14.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.2",
+    "wrangler": "4.141.0"
+  }
+}
