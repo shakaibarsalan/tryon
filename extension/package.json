@@ -1,0 +1,15 @@
+{
+  "name": "@tryon/extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": { "@tryon/shared": "0.1.0", "@tryon/detector": "0.1.0" },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:release": "node build.mjs --release",
+    "watch": "node build.mjs --watch",
+    "serve": "node scripts/serve.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
