@@ -1,0 +1,10 @@
+{
+  "name": "Try-On",
+  "shortName": "Try-On",
+  "description": "Try on clothes from any online store on your own photo. Your results are saved only in your browser.",
+  "colors": {
+    "plum": "#3b1f4a",
+    "cream": "#fbf7f0",
+    "gold": "#d9a441"
+  }
+}

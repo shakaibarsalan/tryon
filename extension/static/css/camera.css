@@ -1,0 +1,7 @@
+/* Camera tab */
+.camera-page { max-width: 460px; margin: 0 auto; padding: 28px 16px 40px; display: grid; gap: 14px; }
+.brand-row { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.brand-mark { width: 28px; height: 28px; }
+#cam-start { display: grid; gap: 10px; }
+#cam-start .tips { margin: 0 0 4px; }
+.done h2 { color: var(--ok); }
