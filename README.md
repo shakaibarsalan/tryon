@@ -2,9 +2,24 @@
 
 See clothes from any online store on your own photo, before you buy.
 
-![Try-On demo: consent, a sample photo, a garment pick and a mock render](docs/images/demo.gif)
+[![Live demo](https://img.shields.io/badge/live%20demo-tryonlab.vercel.app-3b1f4a)](https://tryonlab.vercel.app)
+[![Tests](https://img.shields.io/badge/tests-212%20passing-2e7d4f)](#run-it)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](tsconfig.base.json)
+[![Chrome MV3](https://img.shields.io/badge/Chrome-MV3%20extension-4285f4)](extension)
+[![Cloudflare Workers](https://img.shields.io/badge/API-Cloudflare%20Workers-f38020)](api)
+[![License: MIT](https://img.shields.io/badge/license-MIT-555)](LICENSE)
 
-**Live demo: [tryonlab.vercel.app](https://tryonlab.vercel.app)**. It is the real extension side panel running in a normal web page, with a fake `chrome` object and a mock backend. Nothing leaves your browser, and the mock "render" just pastes the garment onto your photo. Real renders go through an AI try-on model, which needs an API key or a GPU.
+![One photo of a model, then three AI try-on renders of her wearing a kurti, a linen shirt and a floral dress, each with the product photo it came from](docs/images/real-renders.jpg)
+
+*Real output from FASHN VTON 1.5. Left: the photo. Then the same person wearing each garment, with the product photo the model was given in the corner. The model and garment photos are AI-generated (FLUX.1-schnell), so no real person's photo is used.*
+
+## Try the demo
+
+**[tryonlab.vercel.app](https://tryonlab.vercel.app)** runs the real extension side panel in a normal web page, next to a sample store.
+
+![Demo: agree to the consent screen, use the sample model, pick the kurti and then the dress, and get the AI renders](docs/images/demo.gif)
+
+Use the sample model with any of the three garments and the panel returns the real render above. Your own photo works too, but in the demo it gets a quick preview that is clearly labelled as not AI. Live renders need the extension and the Try-On API with a FASHN key or a GPU, which a free static page can't offer. Everything else (consent, photo storage, garment picking, polling, errors, history) is the production code.
 
 ## What it does
 
@@ -47,9 +62,9 @@ flowchart LR
 - Providers behind one interface: `mock`, `hf-space` (the free FASHN VTON 1.5 Space, dev only) and `fashn` (FASHN API).
 - 212 unit tests across the four packages, a CORS matrix tool that checks which stores' images can be fetched directly, and a blind-rating eval harness for comparing providers.
 
-| The fitting room, before you start | A finished (mock) render |
+| The fitting room, before you start | A finished render, with feedback and download |
 |---|---|
-| ![Side panel consent screen next to the sample store page](docs/images/consent.png) | ![Side panel showing a mock render with Keep, Not right and Download](docs/images/panel-result.png) |
+| ![Side panel consent screen with the three agreement boxes ticked](docs/images/consent.png) | ![Side panel showing the AI render of the model in the yellow kurti, with Keep, Not right and Download](docs/images/panel-result.png) |
 
 ## Tech stack
 
@@ -68,7 +83,7 @@ Needs Node 24 and Chrome 116 or newer.
 git clone https://github.com/shakaibarsalan/tryon
 cd tryon
 npm install                    # .npmrc turns install scripts off and pins exact versions
-npm test                       # all four packages
+npm test                       # 212 tests across the four packages
 npm run build -w extension     # dev build into extension/dist, including the demo page
 npm run serve -w extension     # http://localhost:5178/dev/demo.html, same as the live demo
 ```
@@ -90,7 +105,7 @@ cd api
 npx wrangler dev --port 8787 --var PROVIDER:hf-space
 ```
 
-A render through the API and the free Space took about 27 seconds when I tested it. For production, set `PROVIDER=fashn` and a `FASHN_API_KEY`.
+A render through the free Space takes about 30 seconds. For production, set `PROVIDER=fashn` and a `FASHN_API_KEY`. To re-create the demo's sample renders, run `node tools/sample-renders.mjs`.
 
 ## Configuration
 
@@ -110,27 +125,27 @@ Plain settings live in `api/wrangler.toml`: `PROVIDER` (`mock`, `hf-space`, `fas
 packages/shared/     Contracts every part shares: types, limits, category mapping
 packages/detector/   Finds garment images, titles and categories on store pages
 api/                 Try-On API (Cloudflare Worker, D1) and its providers
-extension/           Chrome MV3 extension; dev/ holds the harness and the demo page
+extension/           Chrome MV3 extension; dev/ holds the harness, the demo page and its sample images
 eval/                Blind rating harness for comparing providers on a golden set
-tools/               cors-matrix.mjs: can the extension fetch each store's images?
-docs/                Plan, engineering design, CORS results, provider research
+tools/               cors-matrix.mjs (which stores' images can be fetched), sample-renders.mjs
+docs/                CORS results, provider research, README images
 ```
 
 Each folder has its own README with the details.
 
 ## Limitations
 
-- Paused at Phase 0. The extension and API work end to end locally; nothing is deployed except the static demo.
+- The extension and API work end to end locally; only the static demo is deployed.
 - The store widget and the web app are designed but not built.
 - There's no person-photo check yet (one person, torso visible). A head-and-shoulders photo only shows the neckline of a dress.
+- The model handles some garments better than others. Short and mid-length tops and dresses come out well; a knee-length kurta with long sleeves came back with short, puffed sleeves in my tests.
 - The free Hugging Face Space allows a few renders a day. Real use needs a FASHN key, or a GPU with about 8 GB of VRAM to self-host FASHN VTON 1.5.
 - Images inside iframes and closed shadow roots aren't detected, and the screenshot fallback only works while the image is on screen.
 - No sign-in yet: free renders are counted per install. The Privacy and Terms links are placeholders.
-- The demo is mock-only. It shows the real panel and flow, not real AI output.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). AI models and provider APIs have their own terms.
+MIT. See [LICENSE](LICENSE). AI models and provider APIs have their own terms; the FASHN VTON 1.5 Space is for development use.
 
 ## Author
 

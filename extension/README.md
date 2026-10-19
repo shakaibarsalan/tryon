@@ -127,11 +127,14 @@ segmentation later); all code is bundled.
 http://localhost:5178/dev/harness.html (or `/dev/demo.html`, the same harness with visitor-facing
 copy, which is what the live demo at https://tryonlab.vercel.app serves).
 
-![The demo page: a sample store on the left, the real side panel with a mock render on the right](../docs/images/result.png)
+![The demo page: a sample store on the left, the real side panel with an AI render of the sample model on the right](../docs/images/result.png)
  The real `sidepanel.js` runs in an iframe with a fake
 `chrome` (in-memory storage, runtime messaging, no-op scripting/sidePanel, a fake service worker)
-and an in-page mock API (result = garment pasted on your photo). Buttons simulate garment picks
-(normal, screenshot fallback, blocked image, unsupported shoes), a sample person photo, API errors
+and an in-page mock API. With the sample model (`dev/samples/model.jpg`) and one of the sample
+garments, it returns that garment's real FASHN VTON 1.5 render from `dev/samples/` (made with
+`tools/sample-renders.mjs`); any other photo gets a garment-pasted preview labelled "not an AI
+render". Buttons simulate garment picks
+(normal, screenshot fallback, blocked image, unsupported shoes), the sample model photo, API errors
 per code, render time and quota. Untick "Mock API" to use the real API at `TRYON_API`. Use http,
 not `file://` (BroadcastChannel and IndexedDB need a real origin).
 
