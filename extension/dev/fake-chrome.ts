@@ -198,22 +198,92 @@ const JOB_ERRORS = ["pose_not_found", "content_blocked", "provider_error"];
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const apiError = (code: string, status: number) => json({ error: { code, message: `mock ${code}` } }, status);
 
+// Sample renders: the harness sends the sample model, garments and their real FASHN VTON 1.5 renders.
+// A request whose person and garment look like a sample pair (same 16x16 average hash, so the
+// panel's re-encoding doesn't matter) gets that real render; anything else gets a labelled preview.
+let samples: { model: string; renders: { garment: string; render: string }[] } | undefined;
+const hashes = new Map<string, Promise<boolean[]>>();
+const loadBitmap = async (u: string) => createImageBitmap(await (await fetch(u)).blob());
+
+function averageHash(url: string): Promise<boolean[]> {
+  let p = hashes.get(url);
+  if (!p) {
+    p = loadBitmap(url).then((bmp) => {
+      const c = new OffscreenCanvas(16, 16);
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bmp, 0, 0, 16, 16);
+      const px = ctx.getImageData(0, 0, 16, 16).data;
+      const grey = Array.from({ length: 256 }, (_, i) => px[i * 4]! * 0.3 + px[i * 4 + 1]! * 0.59 + px[i * 4 + 2]! * 0.11);
+      const mean = grey.reduce((a, b) => a + b, 0) / 256;
+      return grey.map((v) => v > mean);
+    });
+    if (!url.startsWith("data:")) hashes.set(url, p);
+  }
+  return p;
+}
+const sameImage = async (a: string, b: string) => {
+  const [x, y] = await Promise.all([averageHash(a), averageHash(b)]);
+  return x.filter((v, i) => v !== y[i]).length <= 24;
+};
+
+async function sampleRender(person: string, garment: string): Promise<string | undefined> {
+  if (!samples) return undefined;
+  try {
+    if (!(await sameImage(person, samples.model))) return undefined;
+    for (const s of samples.renders) if (await sameImage(garment, s.garment)) return s.render;
+  } catch (e) {
+    log("sample match failed", e);
+  }
+  return undefined;
+}
+
+function tag(ctx: OffscreenCanvasRenderingContext2D, width: number, height: number, text: string, bg: string): void {
+  const size = Math.round(width / 30);
+  ctx.font = `600 ${size}px system-ui, sans-serif`;
+  const pad = size * 0.7;
+  const w = ctx.measureText(text).width + pad * 2;
+  const h = size * 2;
+  const x = size * 0.8;
+  const y = height - h - size * 0.8;
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, h / 2);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillText(text, x + pad, y + h * 0.68);
+}
+
 async function composite(person: string, garment: string): Promise<string> {
-  const load = async (u: string) => createImageBitmap(await (await fetch(u)).blob());
-  const [p, g] = await Promise.all([load(person), load(garment)]);
+  const real = await sampleRender(person, garment);
+  if (real) {
+    const r = await loadBitmap(real);
+    const canvas = new OffscreenCanvas(r.width, r.height);
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(r, 0, 0);
+    tag(ctx, r.width, r.height, "AI render · FASHN VTON 1.5", "rgba(46,125,79,.92)");
+    return blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 }));
+  }
+  // Not a sample pair: a quick paste so the flow still completes, clearly marked as not AI.
+  const [p, g] = await Promise.all([loadBitmap(person), loadBitmap(garment)]);
   const canvas = new OffscreenCanvas(p.width, p.height);
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(p, 0, 0);
   const w = p.width * 0.5;
   const h = (g.height / g.width) * w;
-  ctx.globalAlpha = 0.9;
-  ctx.drawImage(g, (p.width - w) / 2, p.height * 0.24, w, h);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "rgba(59,31,74,.85)";
-  ctx.fillRect(0, p.height - 44, p.width, 44);
-  ctx.fillStyle = "#fbf7f0";
-  ctx.font = "600 22px system-ui";
-  ctx.fillText("MOCK RESULT (dev harness)", 16, p.height - 15);
+  // Drop the product photo's white backdrop so only the garment is pasted.
+  const cut = new OffscreenCanvas(g.width, g.height);
+  const cctx = cut.getContext("2d")!;
+  cctx.drawImage(g, 0, 0);
+  const px = cctx.getImageData(0, 0, g.width, g.height);
+  for (let i = 0; i < px.data.length; i += 4) {
+    const r = px.data[i]!, gr = px.data[i + 1]!, b = px.data[i + 2]!;
+    const min = Math.min(r, gr, b);
+    // Near-white, low-saturation pixels (the backdrop and its soft shadow) fade out.
+    if (min > 200 && Math.max(r, gr, b) - min < 20) px.data[i + 3] = Math.max(0, Math.round(255 - (min - 200) * 9));
+  }
+  cctx.putImageData(px, 0, 0);
+  ctx.drawImage(cut, (p.width - w) / 2, p.height * 0.2, w, h);
+  tag(ctx, p.width, p.height, "Preview only · not an AI render", "rgba(59,31,74,.9)");
   return blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 }));
 }
 
@@ -328,6 +398,7 @@ window.addEventListener("message", async (e: MessageEvent) => {
     case "config":
       Object.assign(config, { mockApi: !!cmd.mockApi, failWith: String(cmd.failWith ?? ""), delayMs: Number(cmd.delayMs ?? 4000) });
       if (typeof cmd.quota === "number") mockQuota = cmd.quota;
+      if (cmd.samples) samples = cmd.samples as typeof samples;
       log("config", config, "quota", mockQuota);
       break;
     case "simulate-pick": {
