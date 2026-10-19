@@ -85,6 +85,8 @@ function writeDevPages() {
   for (const page of ["harness.html", "demo.html"]) {
     writeFileSync(join(dist, "dev", page), templateHtml(readFileSync(join(root, "dev", page), "utf8")));
   }
+  // Sample model, garments and their real AI renders used by both pages.
+  cpSync(join(root, "dev", "samples"), join(dist, "dev", "samples"), { recursive: true });
 }
 
 function writeIcons() {
