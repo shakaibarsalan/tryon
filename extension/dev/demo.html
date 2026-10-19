@@ -4,22 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>%BRAND_NAME% · Live demo</title>
-  <meta name="description" content="%BRAND_NAME%: AI virtual try-on for any fashion store. This demo runs the real extension side panel with a mock backend, entirely in your browser.">
+  <meta name="description" content="%BRAND_NAME%: AI virtual try-on for any fashion store. This demo runs the real extension side panel in your browser, with real AI renders for the sample model.">
+  <link rel="icon" href="../icons/icon-32.png">
   <link rel="stylesheet" href="../css/base.css">
   <style>
     body { min-height: 100vh; }
     .layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 100vh; }
-    .shop { padding: 28px 28px 40px; display: grid; gap: 18px; align-content: start; max-width: 780px; }
+    .shop { padding: 28px 32px 40px; display: grid; gap: 20px; align-content: start; max-width: 860px; }
     .panel-frame { border-left: 1px solid var(--border); background: var(--bg); position: sticky; top: 0; height: 100vh; }
     .panel-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
-    .hero h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: -0.01em; }
-    .hero p { margin: 0; }
-    .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 10px; }
-    .steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
-    .product { display: grid; grid-template-columns: 220px 1fr; gap: 18px; align-items: start; }
-    .product img { width: 220px; border-radius: 12px; border: 1px solid var(--border); background: #fff; cursor: grab; }
-    .product h2 { margin: 2px 0 6px; font-size: 19px; }
-    .product .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); margin-bottom: 12px; }
+    .badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+    .hero h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: -0.02em; }
+    .hero p { margin: 0; font-size: 15px; max-width: 62ch; }
+
+    .results .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 12px; }
+    .results .head p { margin: 0; }
+    .strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .shot { position: relative; margin: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #e9e9e9; aspect-ratio: 3 / 4; }
+    .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .shot figcaption { position: absolute; left: 8px; bottom: 8px; font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: rgba(0,0,0,.62); color: #fff; }
+    .shot .thumb { position: absolute; right: 8px; top: 8px; width: 30%; height: auto; aspect-ratio: 3 / 4; object-fit: contain; border-radius: 8px; border: 2px solid #fff; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+    .shot.you figcaption { background: var(--brand); color: var(--on-brand); }
+
+    .steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; font-size: 14px; }
+    .store { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .item { display: grid; gap: 8px; align-content: start; padding: 10px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
+    .item img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 10px; background: #fff; cursor: grab; }
+    .item h3 { margin: 4px 2px 0; font-size: 14.5px; }
+    .item .price { margin: 0 2px; font-weight: 700; }
+    .item .btn { width: 100%; }
+    .note { font-size: 13px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); margin: 0; }
+
     .controls { display: grid; gap: 10px; }
     .controls .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     details summary { cursor: pointer; font-weight: 600; font-size: 14px; }
@@ -29,12 +45,13 @@
     code { font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 5px; }
     .foot { font-size: 13px; }
     .foot a { color: inherit; }
+    @media (max-width: 1100px) { .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 820px) {
       .layout { grid-template-columns: 1fr; }
       .shop { padding: 18px 16px 24px; }
+      .hero h1 { font-size: 24px; }
       .panel-frame { position: static; height: 780px; border-left: 0; border-top: 1px solid var(--border); }
-      .product { grid-template-columns: 1fr; }
-      .product img { width: 100%; max-width: 260px; }
+      .store { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
   <script src="harness.js" defer></script>
@@ -43,32 +60,60 @@
 <div class="layout">
   <main class="shop">
     <section class="hero">
-      <span class="badge">Demo · runs entirely in your browser</span>
+      <span class="badge"><i></i>Live demo · runs in your browser</span>
       <h1>%BRAND_NAME%: see clothes on you before you buy</h1>
-      <p class="muted">The panel on the right is the real Chrome extension side panel. Here it runs with a fake <code>chrome</code> object and a mock backend, so nothing leaves this page. The mock "render" just pastes the garment onto your photo. The real API sends both images to an AI try-on model.</p>
+      <p class="muted">Pick a garment on any store, add one photo of yourself, and an AI try-on model shows you wearing it. The Try-On panel on this page is the real Chrome extension side panel, running with a stand-in for the browser APIs.</p>
     </section>
 
-    <section class="card controls">
-      <p class="card-title">Try it in three steps</p>
+    <section class="card results" aria-labelledby="results-h">
+      <div class="head">
+        <h2 id="results-h">Real AI results</h2>
+        <p class="fine muted">FASHN VTON 1.5 · about 30 s per render</p>
+      </div>
+      <div class="strip">
+        <figure class="shot you"><img data-sample="model.jpg" alt="The sample model in a white t-shirt and jeans"><figcaption>Your photo</figcaption></figure>
+        <figure class="shot"><img data-sample="render-kurti.webp" alt="AI render of the model wearing the yellow block-print kurti"><img class="thumb" data-sample="kurti.jpg" alt=""><figcaption>Kurti</figcaption></figure>
+        <figure class="shot"><img data-sample="render-shirt.webp" alt="AI render of the model wearing the blue linen shirt"><img class="thumb" data-sample="shirt.jpg" alt=""><figcaption>Linen shirt</figcaption></figure>
+        <figure class="shot"><img data-sample="render-dress.webp" alt="AI render of the model wearing the floral midi dress"><img class="thumb" data-sample="dress.jpg" alt=""><figcaption>Midi dress</figcaption></figure>
+      </div>
+      <p class="fine muted" style="margin:10px 0 0">Each result is the actual model output for the garment photo in its corner, made with the same request the API's Hugging Face provider sends (<code>tools/sample-renders.mjs</code>). The model and garment photos are AI-generated, so no real person's photo is used.</p>
+    </section>
+
+    <section class="card controls" aria-labelledby="steps-h">
+      <h2 id="steps-h">Try it yourself</h2>
       <ol class="steps">
         <li>Tick the boxes in the panel and press <strong>Agree and continue</strong>.</li>
-        <li>Add a photo: <button type="button" class="btn" id="sample-photo">Use a generated sample person</button> or upload your own in the panel.</li>
-        <li>Press <strong>Try on</strong> under the kurta below (or drag its image into the panel), then <strong>Try it on</strong> in the panel.</li>
+        <li><button type="button" class="btn" id="sample-photo">Use the sample model</button> or upload your own photo in the panel.</li>
+        <li>Press <strong>Try on</strong> under a garment below (or drag its picture into the panel), then <strong>Try it on</strong> in the panel.</li>
       </ol>
     </section>
 
-    <section class="card product">
-      <img id="product-img" alt="Embroidered Lawn Kurta (generated sample)" draggable="true">
-      <div>
-        <p class="fine muted">Sample store page</p>
-        <h2>Embroidered Lawn Kurta</h2>
-        <p><strong>PKR 4,990</strong></p>
-        <p class="muted">On a real store, the extension finds product images like this one and adds a small "Try on" button to each.</p>
-        <div class="row">
-          <button type="button" class="btn primary" id="pick">Try on</button>
-        </div>
+    <section aria-labelledby="store-h">
+      <p class="fine muted" style="margin:0 0 4px">Sample store page</p>
+      <h2 id="store-h" style="margin-bottom:12px">New in: summer edit</h2>
+      <div class="store">
+        <article class="item">
+          <img data-garment="kurti" alt="Block-print cotton kurti, mustard yellow" draggable="true">
+          <h3>Block-Print Cotton Kurti</h3>
+          <p class="price">PKR 2,490</p>
+          <button type="button" class="btn primary" data-pick="kurti">Try on</button>
+        </article>
+        <article class="item">
+          <img data-garment="shirt" alt="Linen short-sleeve shirt, sky blue" draggable="true">
+          <h3>Linen Short-Sleeve Shirt</h3>
+          <p class="price">PKR 3,290</p>
+          <button type="button" class="btn primary" data-pick="shirt">Try on</button>
+        </article>
+        <article class="item">
+          <img data-garment="dress" alt="Floral midi dress, maroon with cream flowers" draggable="true">
+          <h3>Floral Midi Dress</h3>
+          <p class="price">PKR 5,990</p>
+          <button type="button" class="btn primary" data-pick="dress">Try on</button>
+        </article>
       </div>
     </section>
+
+    <p class="note">With the sample model, the panel shows the real AI render for each garment. Your own photo works too, but here it gets a quick, labelled preview: live renders need the extension and the Try-On API with a FASHN key or a GPU (see the README).</p>
 
     <details class="card controls">
       <summary>More: edge cases the panel handles</summary>
@@ -97,12 +142,13 @@
           <select id="delay">
             <option value="2500" selected>2.5 s</option>
             <option value="6000">6 s</option>
-            <option value="20000">20 s</option>
+            <option value="30000">30 s (real)</option>
           </select>
         </label>
         <label class="inline">Free renders
           <select id="quota">
-            <option value="3" selected>3</option>
+            <option value="10" selected>10</option>
+            <option value="3">3</option>
             <option value="1">1</option>
             <option value="0">0</option>
           </select>
