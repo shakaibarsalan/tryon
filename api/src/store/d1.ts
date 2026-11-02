@@ -1,5 +1,5 @@
 // D1-backed Store. Each guard is one conditional statement, which D1 executes atomically.
-// Phase 1 moves the spend counters to a Durable Object (plan-v3 §D).
+// Planned for phase 1: move the daily spend counters to a Durable Object.
 import { USD_EPSILON, type InstallRow, type RenderPatch, type RenderRow, type SpendRow, type Store } from "./types";
 
 const PATCH_COLUMNS = ["status", "provider_job_id", "cost_usd", "error_code", "error_message", "completed_at", "ms"] as const;
