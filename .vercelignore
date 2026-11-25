@@ -1,0 +1,4 @@
+# Vercel serves the built extension (extension/dist) as the demo. Without this line it would also
+# turn every file in the Cloudflare Worker's api/ folder into a Vercel function (30 of them, more
+# than the free plan's 12) and the deploy would fail.
+/api
