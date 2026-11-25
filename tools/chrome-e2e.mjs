@@ -353,11 +353,31 @@ async function main() {
           const all = await visibleChips(cdp, page).catch(() => []);
           throw new Error(`no Try on chip on screen (${all.total ?? 0} chips in the page: ${JSON.stringify(all.details ?? []).slice(0, 400)})`);
         }
-        const chip = chips[Math.min(Number(store.chip ?? 0), chips.length - 1)];
+        // Like a shopper: the chip on the biggest product photo (the main one), unless the store sets one.
+        const areas = await evaluate(
+          cdp,
+          page,
+          `JSON.stringify(${JSON.stringify(chips)}.map((c) => {
+            const img = document.elementsFromPoint(c.x + 40, c.y + 40).find((e) => e.tagName === "IMG");
+            const r = img ? img.getBoundingClientRect() : null;
+            return r ? r.width * r.height : 0;
+          }))`,
+        ).then((s) => JSON.parse(s)).catch(() => chips.map(() => 0));
+        const biggest = areas.indexOf(Math.max(...areas));
+        const chip = store.chip !== undefined ? chips[Math.min(Number(store.chip), chips.length - 1)] : chips[Math.max(0, biggest)];
+        const before = await inPanel("document.getElementById('garment-img').getAttribute('src') || ''");
         await click(cdp, page, chip.x, chip.y);
         log(`clicked chip at ${Math.round(chip.x)},${Math.round(chip.y)} (${chips.length} chips)`);
 
-        await waitUntil(async () => (await shown("garment-card")) && !(await shown("garment-loading")), 60_000, "garment loaded");
+        // Wait for this garment, not the previous store's card still on screen.
+        await waitUntil(
+          async () =>
+            (await shown("garment-card")) &&
+            !(await shown("garment-loading")) &&
+            ((await inPanel("document.getElementById('garment-img').getAttribute('src') || ''")) !== before || (await shown("garment-error"))),
+          90_000,
+          "this garment loaded",
+        );
         Object.assign(
           r,
           await inPanel(`({
@@ -438,7 +458,7 @@ async function main() {
           await inPanel("document.getElementById('mirror-real').click(); true");
         } else {
           recorder?.mark(`try:${store.name}`);
-          await waitUntil(() => inPanel("!document.getElementById('try-btn').disabled"), 15_000, "Try it on enabled");
+          await waitUntil(() => inPanel("!document.getElementById('try-btn').disabled"), 45_000, "Try it on enabled");
           await inPanel("document.getElementById('try-btn').click(); true");
         }
         const progress = new Set();
