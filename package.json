@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Try-On: extension, store widget and Try-On API",
+  "engines": { "node": ">=22" },
   "workspaces": [
     "packages/shared",
     "packages/detector",

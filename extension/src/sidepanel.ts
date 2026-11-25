@@ -2,7 +2,7 @@
 import { LIMITS, normalizeCategory, type AccountQuota, type Category, type RenderJob, type RenderRequest, type ServerConfig } from "@tryon/shared";
 import { createApiClient, TryOnApiError } from "./lib/api";
 import { CameraCapture, cameraErrorKind, cameraErrorText, cameraPermissionState, openCameraStream } from "./lib/camera-capture";
-import { API_BASE, BRAND, CONSENT_VERSION, LINKS, WEB_BASE } from "./lib/config";
+import { API_BASE, BRAND, CONSENT_VERSION, IS_DEV, LINKS, WEB_BASE } from "./lib/config";
 import { dataUrlToBlob, extensionForMime, parseDataUrl } from "./lib/dataurl";
 import { clearAll, deletePhoto, deleteResult, getPhoto, listResults, putResult, type PersonPhoto, type StoredResult } from "./lib/db";
 import { parseDropUrl } from "./lib/drop";
@@ -57,6 +57,8 @@ const ui = {
   windowId: undefined as number | undefined,
   camera: undefined as CameraCapture | undefined,
   account: undefined as AccountRecord | undefined,
+  /** The web page has no Try-On API to talk to (public demo). */
+  noApi: false,
   accountQuota: undefined as AccountQuota | undefined,
   config: undefined as ServerConfig | undefined,
 };
@@ -477,16 +479,17 @@ async function openMirror(): Promise<void> {
   $("mirror-btn").hidden = true;
   setText("mirror-status", "Starting the camera…");
   try {
-    // The side panel can't show Chrome's camera prompt. Until the camera is allowed, the mirror
-    // opens in a tab, which can ask; after that it works here too (same extension origin).
-    if (HOST === "extension" && (await cameraPermissionState()) !== "granted") {
+    // The extension's side panel can't show Chrome's camera prompt. Until the camera is allowed, the
+    // mirror opens in a tab, which can ask; after that it works here too (same extension origin).
+    // Any normal page (the web page, the demo) asks right here.
+    if (location.protocol === "chrome-extension:" && (await cameraPermissionState()) !== "granted") {
       const tab = await activeTab();
       openTab(extensionUrl("mirror.html"), tab?.id);
       closeMirror();
       toast("The live mirror opened in a tab so Chrome can ask for the camera once. After that it also works here.", 8000);
       return;
     }
-    const stream = await openCameraStream();
+    const stream = await openCameraStream("live");
     const engine = await loadMirrorEngine(extensionUrl("/mirror-engine.js"));
     const session = await engine.start({
       canvas: $<HTMLCanvasElement>("mirror-canvas"),
@@ -498,7 +501,11 @@ async function openMirror(): Promise<void> {
       return;
     }
     mirror = session;
-    session.onStatus((s) => setText("mirror-status", s.message));
+    session.onStatus((s) => {
+      setText("mirror-status", s.message);
+      // Frame rate and quality step, in development builds only.
+      setText("mirror-fps", IS_DEV && s.fps !== undefined ? `${s.fps} fps${s.quality ? ` · step ${s.quality}` : ""}` : undefined);
+    });
     await syncMirrorGarment();
   } catch (e) {
     const kind = cameraErrorKind(e);
@@ -678,6 +685,13 @@ async function loadAccount(): Promise<void> {
     ui.config = await api.getConfig();
   } catch (e) {
     console.debug("[try-on] config unavailable:", errorText(e));
+    // A web page without the Try-On API behind it (like the public demo): the live mirror still
+    // works, AI photos don't, so say that instead of failing on every press.
+    if (HOST !== "extension") {
+      ui.noApi = true;
+      renderTryButton();
+      $("mirror-real").hidden = true;
+    }
   }
   renderAccount();
 }
@@ -800,6 +814,11 @@ function selectedCategory(): Category | "auto" {
 function renderTryButton(): void {
   const btn = $<HTMLButtonElement>("try-btn");
   const g = ui.garment;
+  if (ui.noApi) {
+    btn.disabled = true;
+    btn.textContent = "AI photos are off in this demo";
+    return;
+  }
   if (ui.rendering) {
     btn.disabled = true;
     btn.textContent = "Working…";

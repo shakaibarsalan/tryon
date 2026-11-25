@@ -1,8 +1,8 @@
 // Live mirror tab (mirror.html): the same live view as the side panel, bigger, and the place where
 // Chrome asks for the camera the first time (the side panel can't show that prompt). It follows the
 // garment picked on any store page through storage.session, like the side panel does.
-import { BRAND } from "./lib/config";
-import { cameraErrorKind, cameraErrorText, openCameraStream } from "./lib/camera-capture";
+import { BRAND, IS_DEV } from "./lib/config";
+import { cameraErrorKind, cameraErrorText, cameraPermissionState, openCameraStream } from "./lib/camera-capture";
 import { loadMirrorEngine, mirrorCategory } from "./lib/mirror/loader";
 import { isLongTop } from "./lib/mirror/math";
 import type { MirrorSession } from "./lib/mirror/types";
@@ -66,12 +66,29 @@ async function main(): Promise<void> {
   });
 
   let stream: MediaStream;
+  // While Chrome (and, the first time, macOS or Windows) waits for permission, say so plainly.
+  const state = await cameraPermissionState();
+  if (state === "denied") {
+    status(cameraErrorText("denied"));
+    return;
+  }
+  if (state !== "granted") status("Chrome is asking to use your camera: click Allow at the top of this window.");
+  const slow = setTimeout(
+    () =>
+      status(
+        "Still waiting for the camera. Click Allow at the top of this window. On a Mac, also check System Settings > Privacy & Security > Camera and turn on Google Chrome.",
+      ),
+    8000,
+  );
   try {
-    stream = await openCameraStream();
+    stream = await openCameraStream("live");
   } catch (e) {
     status(cameraErrorText(cameraErrorKind(e)));
     return;
+  } finally {
+    clearTimeout(slow);
   }
+  status("Loading the body tracker…");
   try {
     const engine = await loadMirrorEngine(extensionUrl("/mirror-engine.js"));
     session = await engine.start({ canvas: $<HTMLCanvasElement>("mirror-canvas"), stream, assetBase: extensionUrl("/mediapipe").replace(/\/+$/, "") });
@@ -80,7 +97,12 @@ async function main(): Promise<void> {
     status(`The live mirror couldn't start: ${errorText(e)}`);
     return;
   }
-  session.onStatus((s) => status(s.message));
+  session.onStatus((s) => {
+    status(s.message);
+    const fps = $("mirror-fps");
+    fps.hidden = !IS_DEV || s.fps === undefined;
+    fps.textContent = s.fps !== undefined ? `${s.fps} fps${s.quality ? ` · step ${s.quality}` : ""}` : "";
+  });
   onItemChange("session", KEYS.garment, (v) => void applyGarment(v as GarmentState | undefined));
   await applyGarment(await getItem<GarmentState>("session", KEYS.garment));
 }

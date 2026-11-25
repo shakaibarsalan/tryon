@@ -26,6 +26,7 @@ import {
   type MirrorCategory,
   type Pt,
 } from "../lib/mirror/math";
+import { QualityGovernor } from "../lib/mirror/quality";
 import { buildMesh, deformMesh, type GarmentMesh } from "../lib/mirror/skin";
 import { ENGINE_GLOBAL, type MirrorEngine, type MirrorGarment, type MirrorSession, type MirrorStatus, type PreparedGarmentInfo } from "../lib/mirror/types";
 import { MirrorRenderer, type Capsule } from "./gl";
@@ -300,9 +301,10 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   const listeners = new Set<(s: MirrorStatus) => void>();
   let status: MirrorStatus = { state: "loading", message: "Starting the camera…" };
   const emit = (s: MirrorStatus) => {
-    if (s.state === status.state && s.message === status.message) return;
-    status = s;
-    for (const l of listeners) l(s);
+    const next = { ...s, fps: s.fps ?? status.fps, quality: s.quality ?? status.quality };
+    if (next.state === status.state && next.message === status.message && next.fps === status.fps && next.quality === status.quality) return;
+    status = next;
+    for (const l of listeners) l(next);
   };
 
   const video = document.createElement("video");
@@ -407,6 +409,8 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   let maskW = 0;
   let maskH = 0;
   let positions: Float32Array<ArrayBuffer> | null = null;
+  // Cheaper steps when frames come too slowly (older laptops, phones): see lib/mirror/quality.ts.
+  const governor = new QualityGovernor();
 
   const frame = () => {
     if (stopped) return;
@@ -419,12 +423,17 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         const raw = anchorsFrom(lm, (p) => toCanvas(p, { width: videoW, height: videoH }, crop, false));
         target = smoother.next(raw);
         if (raw.ls || raw.lh) lastSeen = now;
-        const seg = m.liveSegmenter.segmentForVideo(video, now);
-        const cm = seg.categoryMask;
-        mask = cm ? cm.getAsUint8Array().slice() : null;
-        maskW = cm?.width ?? 0;
-        maskH = cm?.height ?? 0;
-        seg.close();
+        const every = governor.current.segmentEvery;
+        if (every === 0) {
+          mask = null;
+        } else if (frames % every === 0) {
+          const seg = m.liveSegmenter.segmentForVideo(video, now);
+          const cm = seg.categoryMask;
+          mask = cm ? cm.getAsUint8Array().slice() : null;
+          maskW = cm?.width ?? 0;
+          maskH = cm?.height ?? 0;
+          seg.close();
+        }
         if (frames % 12 === 0) sample(mask);
       } catch (e) {
         console.debug("[try-on] mirror frame skipped", e);
@@ -450,14 +459,16 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         sceneLum,
         fill,
         mirrored,
-        takeOff: true,
+        takeOff: governor.current.takeOff,
       });
       if (!garment) emit({ state: "tracking", message: "Pick a garment to see it on you." });
       else if (seen && positions) emit({ state: "tracking", message: "Move around: the garment follows you." });
       else emit({ state: "looking", message: "Step back until your shoulders and hips are in view." });
     }
     if (now - fpsSince >= 1000) {
-      status = { ...status, fps: Math.round((fpsFrames * 1000) / (now - fpsSince)) };
+      const fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
+      const quality = governor.update(fps);
+      emit({ ...status, fps, quality });
       fpsFrames = 0;
       fpsSince = now;
     }

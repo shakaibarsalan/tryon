@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "npm install",
+  "buildCommand": "npm run fetch-models -w extension && npm run build -w extension",
+  "outputDirectory": "extension/dist",
+  "redirects": [
+    { "source": "/", "destination": "/dev/demo.html", "permanent": false },
+    { "source": "/demo", "destination": "/dev/demo.html", "permanent": false },
+    { "source": "/store", "destination": "/dev/store.html", "permanent": false }
+  ],
+  "headers": [
+    {
+      "source": "/mediapipe/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    }
+  ]
+}

@@ -22,7 +22,10 @@ export type MirrorState = "loading" | "looking" | "tracking" | "error";
 export interface MirrorStatus {
   state: MirrorState;
   message: string;
+  /** Camera frames handled in the last second. */
   fps?: number;
+  /** 0 = full quality; higher = cheaper steps for slow devices (see lib/mirror/quality.ts). */
+  quality?: number;
 }
 
 export interface MirrorSession {

@@ -193,3 +193,8 @@ html, body { min-height: 100%; }
 .mirror .fine { margin: 0; }
 .mirror-actions { display: flex; gap: 8px; }
 .mirror-actions .btn { flex: 1 1 auto; }
+
+.mirror-fps {
+  position: absolute; top: 8px; right: 8px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(20, 8, 28, 0.66); color: #fbf7f0; font: 600 11px/1.6 var(--font);
+}

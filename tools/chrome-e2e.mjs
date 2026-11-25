@@ -22,6 +22,7 @@
 // prompt); the script then allows the camera for the extension, as a person would, and checks the
 // mirror inside the side panel. With --mirror, "Make it real" starts the AI try-on from the live frame.
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -49,6 +50,8 @@ const only = opt("only", "")
 const record = flag("record");
 const camera = opt("camera", "");
 const mirrorOnly = flag("mirror-only");
+// Stop once the garment is in the fitting room and hand the window to a person (use with --keep-open).
+const setupOnly = flag("setup-only");
 const mirrorMode = flag("mirror") || mirrorOnly;
 const RENDER_TIMEOUT_MS = Number(opt("render-timeout", "900")) * 1000;
 
@@ -209,6 +212,61 @@ function startRecording(cdp, sessions) {
 }
 
 // ------------------------------------------------------------------------------------------------
+// Debug channel for a person testing in the window (--keep-open --control <port>): lists targets,
+// evaluates JavaScript in a target found by URL, and keeps the last console messages and errors of
+// every page, including tabs opened later (like the live mirror tab). Listens on 127.0.0.1 only.
+
+async function startControl(cdp, port) {
+  const logs = [];
+  const urls = new Map();
+  const add = (sessionId, type, text) => {
+    logs.push({ t: new Date().toISOString().slice(11, 19), page: urls.get(sessionId) ?? "?", type, text: String(text).slice(0, 800) });
+    if (logs.length > 400) logs.shift();
+  };
+  cdp.on((m) => {
+    if (m.method === "Target.attachedToTarget") {
+      urls.set(m.params.sessionId, m.params.targetInfo.url.replace(/^chrome-extension:\/\/[a-p]+/, "ext"));
+      void cdp.send("Runtime.enable", {}, m.params.sessionId).catch(() => {});
+      void cdp.send("Runtime.runIfWaitingForDebugger", {}, m.params.sessionId).catch(() => {});
+    } else if (m.method === "Runtime.consoleAPICalled") {
+      add(m.sessionId, m.params.type, m.params.args.map((a) => a.value ?? a.description ?? "").join(" "));
+    } else if (m.method === "Runtime.exceptionThrown") {
+      const d = m.params.exceptionDetails;
+      add(m.sessionId, "exception", d.exception?.description ?? d.text);
+    }
+  });
+  await cdp.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+  const sessions = new Map();
+  const attach = async (match) => {
+    const t = (await cdp.send("Target.getTargets")).targetInfos.find((x) => x.type !== "browser" && x.url.includes(match));
+    if (!t) throw new Error(`no page matching ${match}`);
+    if (!sessions.has(t.targetId)) {
+      const { sessionId } = await cdp.send("Target.attachToTarget", { targetId: t.targetId, flatten: true });
+      urls.set(sessionId, t.url.replace(/^chrome-extension:\/\/[a-p]+/, "ext"));
+      await cdp.send("Runtime.enable", {}, sessionId).catch(() => {});
+      sessions.set(t.targetId, sessionId);
+    }
+    return sessions.get(t.targetId);
+  };
+  createServer(async (req, res) => {
+    const u = new URL(req.url ?? "/", "http://localhost");
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    try {
+      let out;
+      if (u.pathname === "/targets") out = (await cdp.send("Target.getTargets")).targetInfos.map((t) => ({ type: t.type, url: t.url }));
+      else if (u.pathname === "/eval") out = await evaluate(cdp, await attach(u.searchParams.get("target") ?? ""), body);
+      else if (u.pathname === "/logs") out = logs.slice(-Number(u.searchParams.get("n") ?? 60));
+      else throw new Error("use /targets, /eval?target=<url part> (POST the JavaScript) or /logs");
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(out, null, 1));
+    } catch (e) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: String(e?.message ?? e) }));
+    }
+  }).listen(port, "127.0.0.1");
+  log(`debug channel on http://127.0.0.1:${port}`);
+}
 
 async function main() {
   const dist = join(repo, "extension", "dist");
@@ -396,6 +454,11 @@ async function main() {
           writeFileSync(join(outDir, `${slug(store.name)}-page.jpg`), Buffer.from(s.data, "base64")),
         );
 
+        if (setupOnly) {
+          r.status = "ready";
+          log(`${store.name}: garment ready in the fitting room; the window is yours`);
+          continue;
+        }
         let t0 = Date.now();
         if (mirrorMode) {
           // Live mirror: the first time it opens in a tab, which can ask for the camera.
@@ -511,6 +574,8 @@ async function main() {
   } finally {
     writeFileSync(join(outDir, "results.json"), JSON.stringify(results, null, 2));
     if (flag("keep-open")) {
+      const port = Number(opt("control", "0"));
+      if (port) await startControl(cdp, port);
       log("leaving Chrome open (Ctrl+C to quit)");
       await new Promise(() => {});
     }

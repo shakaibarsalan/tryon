@@ -13,14 +13,16 @@ export interface CapturedPhoto {
 
 export type CameraErrorKind = "denied" | "dismissed" | "notfound" | "busy" | "insecure" | "other";
 
-export async function openCameraStream(): Promise<MediaStream> {
+/**
+ * "photo" asks for full HD for a sharp still; "live" asks for 720p, which is plenty for the live
+ * mirror and much cheaper for slower laptops and phones to process every frame.
+ */
+export async function openCameraStream(use: "photo" | "live" = "photo"): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw Object.assign(new Error("Camera API unavailable"), { name: "NotSupportedError" });
   }
-  return navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 1920 }, height: { ideal: 1080 } },
-    audio: false,
-  });
+  const size = use === "live" ? { width: { ideal: 1280 }, height: { ideal: 720 } } : { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  return navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", ...size }, audio: false });
 }
 
 export function cameraErrorKind(e: unknown): CameraErrorKind {
