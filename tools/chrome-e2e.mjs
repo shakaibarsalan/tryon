@@ -15,6 +15,12 @@
 //
 // --record saves DevTools screencast frames of the store tab and the side panel to <out>/frames/
 // (see tools/make-clip.py), for a demo clip.
+//
+// Live mirror: --camera <file.y4m> feeds a video file to Chrome as the webcam (make one from an
+// AI-generated photo with tools/fake-camera.py) and --mirror opens the live mirror on each picked
+// garment. The first time, the mirror opens in a tab (the side panel can't show Chrome's camera
+// prompt); the script then allows the camera for the extension, as a person would, and checks the
+// mirror inside the side panel. With --mirror, "Make it real" starts the AI try-on from the live frame.
 import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -41,6 +47,9 @@ const only = opt("only", "")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 const record = flag("record");
+const camera = opt("camera", "");
+const mirrorOnly = flag("mirror-only");
+const mirrorMode = flag("mirror") || mirrorOnly;
 const RENDER_TIMEOUT_MS = Number(opt("render-timeout", "900")) * 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -212,7 +221,7 @@ async function main() {
   rmSync(extCopy, { recursive: true, force: true });
   cpSync(dist, extCopy, { recursive: true });
   const manifest = JSON.parse(readFileSync(join(extCopy, "manifest.json"), "utf8"));
-  manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), "https://*/*"])];
+  manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), "https://*/*", "http://localhost/*"])];
   writeFileSync(join(extCopy, "manifest.json"), JSON.stringify(manifest, null, 2));
 
   const proc = spawn(
@@ -226,6 +235,9 @@ async function main() {
       "--disable-search-engine-choice-screen",
       "--window-size=1480,940",
       "--lang=en-US",
+      ...(camera
+        ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-video-capture=${resolve(camera)}`]
+        : []),
       "about:blank",
     ],
     { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"] },
@@ -305,6 +317,8 @@ async function main() {
       log(`--- ${store.name}: ${store.productUrl}`);
       try {
         recorder?.mark(`store:${store.name}`);
+        // Clear the previous store's result so it isn't mistaken for this one.
+        await inPanel("(() => { if (!document.getElementById('result').hidden) document.getElementById('result-close').click(); return true; })()");
         const loaded = cdp.waitFor((m) => m.sessionId === page && m.method === "Page.loadEventFired", 45_000, "page load").catch(() => null);
         await cdp.send("Page.navigate", { url: store.productUrl }, page);
         await loaded;
@@ -317,9 +331,13 @@ async function main() {
           return c.length ? c : undefined;
         }, 20_000, "Try on chips").catch(() => []);
         if (!chips.length) {
+          // Like a person flipping the "Try-On buttons" switch off and on in the panel.
+          await inPanel("(() => { const t = document.getElementById('chips-toggle'); t.click(); t.click(); return true; })()");
           await evaluate(cdp, page, "window.scrollTo(0, 0); true");
-          await sleep(1500);
-          chips = await visibleChips(cdp, page);
+          chips = await waitUntil(async () => {
+            const c = await visibleChips(cdp, page);
+            return c.length ? c : undefined;
+          }, 15_000, "Try on chips").catch(() => []);
         }
         r.chips = chips.length;
         if (!chips.length && flag("debug")) {
@@ -358,10 +376,71 @@ async function main() {
           writeFileSync(join(outDir, `${slug(store.name)}-page.jpg`), Buffer.from(s.data, "base64")),
         );
 
-        recorder?.mark(`try:${store.name}`);
-        const t0 = Date.now();
-        await waitUntil(() => inPanel("!document.getElementById('try-btn').disabled"), 15_000, "Try it on enabled");
-        await inPanel("document.getElementById('try-btn').click(); true");
+        let t0 = Date.now();
+        if (mirrorMode) {
+          // Live mirror: the first time it opens in a tab, which can ask for the camera.
+          recorder?.mark(`mirror:${store.name}`);
+          if (flag("mirror-debug")) await inPanel("location.hash = 'mirror-debug'; true");
+          await inPanel("document.getElementById('mirror-btn').click(); true");
+          await sleep(2000);
+          const mirrorStatus = (s) => evaluate(cdp, s, "document.getElementById('mirror-status')?.textContent || ''");
+          const tracking = (text) => (/follows you/.test(text) ? text : undefined);
+          const tab = (await targets()).find((t) => t.url.startsWith(`chrome-extension://${extId}/mirror.html`));
+          if (tab) {
+            const { sessionId: ms } = await cdp.send("Target.attachToTarget", { targetId: tab.targetId, flatten: true });
+            await cdp.send("Runtime.enable", {}, ms);
+            await cdp.send("Page.enable", {}, ms);
+            const t1 = Date.now();
+            r.mirrorTab = await waitUntil(async () => tracking(await mirrorStatus(ms)), 90_000, "mirror tracking in its tab", 500);
+            r.mirrorTabSeconds = Math.round((Date.now() - t1) / 1000);
+            await sleep(1500);
+            await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 }, ms).then((s) =>
+              writeFileSync(join(outDir, `${slug(store.name)}-mirror-tab.jpg`), Buffer.from(s.data, "base64")),
+            );
+            await cdp.send("Target.closeTarget", { targetId: tab.targetId });
+            await cdp.send("Target.activateTarget", { targetId: pageTarget.targetId });
+            // The person clicked Allow in that tab; from now on the side panel can use the camera.
+            await cdp.send("Browser.grantPermissions", { origin: `chrome-extension://${extId}`, permissions: ["videoCapture"] });
+            await inPanel("document.getElementById('mirror-btn').click(); true");
+          }
+          const t2 = Date.now();
+          let lastStatus = "";
+          r.mirrorPanel = await waitUntil(
+            async () => {
+              lastStatus = await inPanel("document.getElementById('mirror').hidden ? '(mirror closed)' : document.getElementById('mirror-status').textContent");
+              return tracking(lastStatus);
+            },
+            90_000,
+            "mirror tracking in the side panel",
+            500,
+          ).catch((e) => {
+            throw new Error(`${e.message}; the mirror said: ${lastStatus}`);
+          });
+          r.mirrorPanelSeconds = Math.round((Date.now() - t2) / 1000);
+          await sleep(Number(opt("mirror-ms", "4000")));
+          await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 }, panel).then((s) =>
+            writeFileSync(join(outDir, `${slug(store.name)}-mirror-panel.jpg`), Buffer.from(s.data, "base64")),
+          );
+          log(`${store.name}: live mirror tracking (${tab ? "tab, then " : ""}side panel)`);
+          // A few frames over time, to see the garment move with the body.
+          for (let i = 1; i <= 4; i++) {
+            await sleep(900);
+            const data = await inPanel("document.getElementById('mirror-canvas').toDataURL('image/jpeg', 0.85)");
+            writeFileSync(join(outDir, `${slug(store.name)}-mirror-${i}.jpg`), Buffer.from(data.split(",")[1], "base64"));
+          }
+          if (mirrorOnly) {
+            r.status = "mirror";
+            await inPanel("document.getElementById('mirror-close').click(); true");
+            continue;
+          }
+          recorder?.mark(`try:${store.name}`);
+          t0 = Date.now();
+          await inPanel("document.getElementById('mirror-real').click(); true");
+        } else {
+          recorder?.mark(`try:${store.name}`);
+          await waitUntil(() => inPanel("!document.getElementById('try-btn').disabled"), 15_000, "Try it on enabled");
+          await inPanel("document.getElementById('try-btn').click(); true");
+        }
         const progress = new Set();
         const outcome = await waitUntil(
           async () => {
@@ -387,6 +466,10 @@ async function main() {
           if (m) writeFileSync(join(outDir, `${slug(store.name)}-result.${m[1] === "jpeg" ? "jpg" : m[1]}`), Buffer.from(m[2], "base64"));
         }
         recorder?.mark(`done:${store.name}`);
+        await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 }, panel).then(
+          (s) => writeFileSync(join(outDir, `${slug(store.name)}-panel.jpg`), Buffer.from(s.data, "base64")),
+          () => {},
+        );
         log(`${store.name}: ${r.status} in ${r.seconds}s ${r.error ?? ""}`);
         await sleep(2500);
       } catch (e) {
@@ -395,6 +478,10 @@ async function main() {
         log(`${store.name}: FAILED ${r.error}`);
         await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 70 }, page).then(
           (s) => writeFileSync(join(outDir, `${slug(store.name)}-failed.jpg`), Buffer.from(s.data, "base64")),
+          () => {},
+        );
+        await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 70 }, panel).then(
+          (s) => writeFileSync(join(outDir, `${slug(store.name)}-panel-failed.jpg`), Buffer.from(s.data, "base64")),
           () => {},
         );
       }
