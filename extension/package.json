@@ -10,6 +10,7 @@
     "watch": "node build.mjs --watch",
     "serve": "node scripts/serve.mjs",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "package": "node build.mjs --release && node scripts/package.mjs"
   }
 }

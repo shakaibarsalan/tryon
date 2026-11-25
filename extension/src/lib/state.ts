@@ -8,6 +8,7 @@ export const KEYS = {
   install: "install",
   prefs: "prefs",
   pendingRender: "pendingRender",
+  account: "account",
   /** storage.session */
   garment: "currentGarment",
 } as const;
@@ -22,13 +23,19 @@ export interface InstallRecord {
   token: string;
 }
 
+/** A signed-in account (Sign in with Google). Only our own token is kept, nothing from Google. */
+export interface AccountRecord {
+  token: string;
+  signedInAt: string;
+}
+
 export interface Prefs {
   chipsEnabled: boolean;
 }
 
 export const DEFAULT_PREFS: Prefs = { chipsEnabled: true };
 
-export type GarmentSource = "fetch" | "capture" | "upload" | "drop";
+export type GarmentSource = "fetch" | "capture" | "upload" | "drop" | "widget";
 
 /** Where garment bytes can be (re)loaded from; kept so the panel can retry after a permission grant. */
 export interface ByteSource {

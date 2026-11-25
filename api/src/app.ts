@@ -1,23 +1,36 @@
 // Try-On API application. Runtime-agnostic: `app.fetch(request, env, ctx)` works in workerd and in
 // Node (tests) because persistence and providers are injected.
 import {
+  HEADER_ACCOUNT_TOKEN,
   HEADER_IDEMPOTENCY_KEY,
   HEADER_INSTALL_TOKEN,
+  type AccountQuota,
+  type AccountToken,
   type ApiError,
   type InstallToken,
   type QuotaView,
   type RenderJob,
   type RenderRequest,
   type RenderStatus,
+  type ServerConfig,
 } from "@tryon/shared";
 import { preflight, withCors } from "./cors";
 import { readConfig, type Config, type Env } from "./env";
 import { errorResponse, HttpError, json, ProviderError } from "./errors";
-import { defaultProviders, type Provider } from "./providers";
+import { verifyGoogleIdToken } from "./google";
+import { defaultProviders, type FetchLike, type Provider } from "./providers";
 import { Router } from "./router";
-import type { InstallRow, RenderRow, Store } from "./store/types";
-import { hashIp, signInstallToken, tokenSecret, verifyInstallToken } from "./token";
-import { roundUsd, utcDay } from "./util";
+import type { AccountRow, InstallRow, RenderRow, Store } from "./store/types";
+import {
+  hashIp,
+  hashSubject,
+  signAccountToken,
+  signInstallToken,
+  tokenSecret,
+  verifyAccountToken,
+  verifyInstallToken,
+} from "./token";
+import { roundUsd, utcDay, utcMonth } from "./util";
 import { MAX_BODY_BYTES, validateIdempotencyKey, validateRenderRequest } from "./validate";
 
 export interface AppOptions {
@@ -26,6 +39,8 @@ export interface AppOptions {
   /** Provider registry keyed by name; defaults to mock, fashn and hf-space. */
   providers?: Record<string, Provider>;
   now?: () => number;
+  /** fetch for Google's public sign-in keys (tests inject a fake). */
+  googleFetch?: FetchLike;
 }
 
 export interface App {
@@ -103,6 +118,20 @@ export function createApp(opts: AppOptions): App {
     return install;
   }
 
+  /** The signed-in account from X-Account-Token, or null when it is missing, invalid or deleted. */
+  async function optionalAccount(ctx: Ctx): Promise<AccountRow | null> {
+    const token = ctx.request.headers.get(HEADER_ACCOUNT_TOKEN)?.trim();
+    if (!token) return null;
+    const payload = await verifyAccountToken(tokenSecret(ctx.env), token);
+    return payload ? ctx.store.getAccount(payload.account_id) : null;
+  }
+
+  async function accountQuota(ctx: Ctx, account: AccountRow, t: number): Promise<AccountQuota> {
+    const used = await ctx.store.accountRendersUsed(account.id, utcMonth(t));
+    const perMonth = ctx.cfg.accountRendersPerMonth;
+    return { renders_left_this_month: Math.max(0, perMonth - used), renders_per_month: perMonth };
+  }
+
   async function ownedRender(ctx: Ctx, install: InstallRow, id: string): Promise<RenderRow> {
     const row = await ctx.store.getRender(id);
     if (!row || row.install_id !== install.id) throw new HttpError("not_found", "Render not found");
@@ -157,7 +186,10 @@ export function createApp(opts: AppOptions): App {
           await ctx.store.updateRender(row.id, { status: result.status });
           row = { ...row, status: result.status };
         }
-        return rowToJob(row);
+        const job = rowToJob(row);
+        if (result.status === "processing" && typeof result.progress === "number") job.progress = Math.round(result.progress * 100) / 100;
+        if (result.status === "queued" && typeof result.queuePosition === "number") job.queue_position = result.queuePosition;
+        return job;
       }
       case "completed": {
         const ms = Math.max(0, t - row.created_at);
@@ -182,8 +214,11 @@ export function createApp(opts: AppOptions): App {
         });
         if (won) {
           await ctx.store.releaseSpend(reservedDay, row.provider, row.cost_usd);
-          // Only provider-side faults give the free render back (not pose_not_found / content_blocked).
-          if (error.code === "provider_error") await ctx.store.refundFreeRender(row.install_id);
+          // Only provider-side faults give the render back (not pose_not_found / content_blocked).
+          if (error.code === "provider_error") {
+            if (row.account_id) await ctx.store.refundAccountRender(row.account_id, utcMonth(row.created_at));
+            else await ctx.store.refundFreeRender(row.install_id);
+          }
           console.log(`[render ${row.id}] failed: ${error.code}`);
         }
         return rowToJob((await ctx.store.getRender(row.id)) ?? row);
@@ -207,7 +242,49 @@ export function createApp(opts: AppOptions): App {
   router.on("GET", "/v1/me", async (ctx) => {
     const install = await authenticate(ctx);
     const body: QuotaView = { install_id: install.id, free_renders_left: install.free_renders_left };
+    const account = await optionalAccount(ctx);
+    if (account) body.account = await accountQuota(ctx, account, now());
     return json(body);
+  });
+
+  // "Delete all my data": the install record and its ledger rows, plus the account when signed in.
+  router.on("DELETE", "/v1/me", async (ctx) => {
+    const install = await authenticate(ctx);
+    const account = await optionalAccount(ctx);
+    await ctx.store.deleteInstall(install.id);
+    if (account) await ctx.store.deleteAccount(account.id);
+    console.log(`[install ${install.id}] deleted on request${account ? " with its account" : ""}`);
+    return json({ deleted: true });
+  });
+
+  router.on("GET", "/v1/config", async (ctx) => {
+    const body: ServerConfig = {
+      provider: ctx.cfg.provider,
+      free_renders_per_install: ctx.cfg.freeRendersPerInstall,
+      account_renders_per_month: ctx.cfg.accountRendersPerMonth,
+    };
+    if (ctx.cfg.googleClientIds[0]) body.google_client_id = ctx.cfg.googleClientIds[0];
+    return json(body);
+  });
+
+  // "Sign in with Google": the client sends the ID token Google gave it; we keep a keyed hash of
+  // the Google account id and answer with our own account token.
+  router.on("POST", "/v1/auth/google", async (ctx) => {
+    const body = await readJson(ctx.request);
+    const idToken = (body as { id_token?: unknown } | null)?.id_token;
+    const t = now();
+    const { sub } = await verifyGoogleIdToken(idToken, { clientIds: ctx.cfg.googleClientIds, fetch: opts.googleFetch, now: t });
+    const secret = tokenSecret(ctx.env);
+    const account = await ctx.store.getOrCreateAccount({
+      id: crypto.randomUUID(),
+      subject_hash: await hashSubject(secret, "google", sub),
+      created_at: t,
+    });
+    const res: AccountToken = {
+      account_token: await signAccountToken(secret, { account_id: account.id, iat: Math.floor(t / 1000) }),
+      ...(await accountQuota(ctx, account, t)),
+    };
+    return json(res);
   });
 
   router.on("POST", "/v1/renders", async (ctx) => {
@@ -241,11 +318,28 @@ export function createApp(opts: AppOptions): App {
       }
       undo.push(() => ctx.store.releaseIpDaily(day, ipHash));
 
-      // 5. install quota
-      if (!(await ctx.store.consumeFreeRender(install.id))) {
-        throw new HttpError("quota_exhausted", "No free renders left for this install");
+      // 5. quota: the install's free renders first, then a signed-in account's monthly renders
+      let accountId: string | null = null;
+      if (await ctx.store.consumeFreeRender(install.id)) {
+        undo.push(() => ctx.store.refundFreeRender(install.id));
+      } else {
+        const account = await optionalAccount(ctx);
+        if (!account) {
+          const signIn = ctx.cfg.googleClientIds.length && ctx.cfg.accountRendersPerMonth > 0;
+          throw new HttpError(
+            "quota_exhausted",
+            signIn
+              ? `No free renders left for this install. Sign in for ${ctx.cfg.accountRendersPerMonth} more every month.`
+              : "No free renders left for this install",
+          );
+        }
+        const month = utcMonth(t);
+        if (!(await ctx.store.consumeAccountRender(account.id, month, ctx.cfg.accountRendersPerMonth))) {
+          throw new HttpError("quota_exhausted", `Your ${ctx.cfg.accountRendersPerMonth} free renders for this month are used up`);
+        }
+        accountId = account.id;
+        undo.push(() => ctx.store.refundAccountRender(account.id, month));
       }
-      undo.push(() => ctx.store.refundFreeRender(install.id));
 
       // 6. spend breaker: reserve the estimate for today's budget of this provider
       const estimate = provider.estimateCostUsd(req);
@@ -287,6 +381,7 @@ export function createApp(opts: AppOptions): App {
         created_at: t,
         completed_at: null,
         ms: null,
+        account_id: accountId,
       };
       const inserted = await ctx.store.insertRender(row);
       if (!inserted.inserted) {

@@ -1,6 +1,16 @@
 // D1-backed Store. Each guard is one conditional statement, which D1 executes atomically.
 // Planned for phase 1: move the daily spend counters to a Durable Object.
-import { USD_EPSILON, type InstallRow, type RenderPatch, type RenderRow, type SpendRow, type Store } from "./types";
+import {
+  USD_EPSILON,
+  type AccountRow,
+  type InstallRow,
+  type PurgeCounts,
+  type PurgeCutoffs,
+  type RenderPatch,
+  type RenderRow,
+  type SpendRow,
+  type Store,
+} from "./types";
 
 const PATCH_COLUMNS = ["status", "provider_job_id", "cost_usd", "error_code", "error_message", "completed_at", "ms"] as const;
 
@@ -50,14 +60,14 @@ export class D1Store implements Store {
     const r = await this.db
       .prepare(
         `INSERT INTO renders (id, install_id, idempotency_key, provider, provider_job_id, status, category, site_origin,
-           client_ref, cost_usd, error_code, error_message, accepted, created_at, completed_at, ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           client_ref, cost_usd, error_code, error_message, accepted, created_at, completed_at, ms, account_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (install_id, idempotency_key) DO NOTHING`,
       )
       .bind(
         row.id, row.install_id, row.idempotency_key, row.provider, row.provider_job_id, row.status, row.category,
         row.site_origin, row.client_ref, row.cost_usd, row.error_code, row.error_message, row.accepted, row.created_at,
-        row.completed_at, row.ms,
+        row.completed_at, row.ms, row.account_id,
       )
       .run();
     if (r.meta.changes === 1) return { inserted: true };
@@ -147,5 +157,82 @@ export class D1Store implements Store {
       )
       .bind(day, provider, reserved, actual)
       .run();
+  }
+
+  async deleteInstall(installId: string): Promise<void> {
+    await this.db.batch([
+      this.db.prepare("DELETE FROM renders WHERE install_id = ?").bind(installId),
+      this.db.prepare("DELETE FROM installs WHERE id = ?").bind(installId),
+    ]);
+  }
+
+  async purge(c: PurgeCutoffs): Promise<PurgeCounts> {
+    const [renders, ipDays, installs, accountMonths, accounts] = await this.db.batch([
+      this.db.prepare("DELETE FROM renders WHERE created_at < ?").bind(c.rendersBefore),
+      this.db.prepare("DELETE FROM ip_daily WHERE day < ?").bind(c.ipDayBefore),
+      this.db
+        .prepare("DELETE FROM installs WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.install_id = installs.id)")
+        .bind(c.installsBefore),
+      this.db.prepare("DELETE FROM account_usage WHERE month < ?").bind(c.usageMonthBefore),
+      this.db
+        .prepare(
+          "DELETE FROM accounts WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM account_usage u WHERE u.account_id = accounts.id)",
+        )
+        .bind(c.accountsBefore),
+    ]);
+    const n = (r: D1Result | undefined) => r?.meta.changes ?? 0;
+    return { renders: n(renders), ipDays: n(ipDays), installs: n(installs), accountMonths: n(accountMonths), accounts: n(accounts) };
+  }
+
+  async getOrCreateAccount(row: AccountRow): Promise<AccountRow> {
+    await this.db
+      .prepare("INSERT INTO accounts (id, subject_hash, created_at) VALUES (?, ?, ?) ON CONFLICT (subject_hash) DO NOTHING")
+      .bind(row.id, row.subject_hash, row.created_at)
+      .run();
+    const found = await this.db
+      .prepare("SELECT id, subject_hash, created_at FROM accounts WHERE subject_hash = ?")
+      .bind(row.subject_hash)
+      .first<AccountRow>();
+    if (!found) throw new Error("account insert failed");
+    return found;
+  }
+
+  async getAccount(id: string): Promise<AccountRow | null> {
+    return this.db.prepare("SELECT id, subject_hash, created_at FROM accounts WHERE id = ?").bind(id).first<AccountRow>();
+  }
+
+  async consumeAccountRender(accountId: string, month: string, limit: number): Promise<boolean> {
+    if (limit <= 0) return false;
+    const r = await this.db
+      .prepare(
+        `INSERT INTO account_usage (account_id, month, renders) VALUES (?1, ?2, 1)
+         ON CONFLICT (account_id, month) DO UPDATE SET renders = renders + 1 WHERE renders < ?3`,
+      )
+      .bind(accountId, month, limit)
+      .run();
+    return r.meta.changes === 1;
+  }
+
+  async refundAccountRender(accountId: string, month: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE account_usage SET renders = renders - 1 WHERE account_id = ? AND month = ? AND renders > 0")
+      .bind(accountId, month)
+      .run();
+  }
+
+  async accountRendersUsed(accountId: string, month: string): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT renders FROM account_usage WHERE account_id = ? AND month = ?")
+      .bind(accountId, month)
+      .first<{ renders: number }>();
+    return row?.renders ?? 0;
+  }
+
+  async deleteAccount(accountId: string): Promise<void> {
+    await this.db.batch([
+      this.db.prepare("DELETE FROM renders WHERE account_id = ?").bind(accountId),
+      this.db.prepare("DELETE FROM account_usage WHERE account_id = ?").bind(accountId),
+      this.db.prepare("DELETE FROM accounts WHERE id = ?").bind(accountId),
+    ]);
   }
 }

@@ -11,6 +11,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildManifest, ICON_SIZES } from "./scripts/manifest.mjs";
+import { legalPage } from "./scripts/legal.mjs";
 import { iconPng } from "./scripts/png.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -19,6 +20,8 @@ const args = new Set(process.argv.slice(2));
 const release = args.has("--release");
 const watch = args.has("--watch");
 const apiUrl = (process.env.TRYON_API || "http://localhost:8787").replace(/\/+$/, "");
+// The Try-On web site: the extension opens its sign-in page and accepts the account token from it.
+const webUrl = (process.env.TRYON_WEB || "http://localhost:5178").replace(/\/+$/, "");
 
 const brand = JSON.parse(readFileSync(join(root, "src", "brand.json"), "utf8"));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -33,6 +36,7 @@ const common = {
   logLevel: "warning",
   define: {
     __TRYON_API__: JSON.stringify(apiUrl),
+    __TRYON_WEB__: JSON.stringify(webUrl),
     __TRYON_DEV__: JSON.stringify(!release),
   },
 };
@@ -43,6 +47,8 @@ const entries = [
   { in: "src/sidepanel.ts", out: "sidepanel.js", format: "iife" },
   { in: "src/camera.ts", out: "camera.js", format: "iife" },
 ];
+// The web try page (try.html) and the store widget: in dev builds and the site, not in the extension package.
+const webEntries = [{ in: "src/widget.ts", out: "widget.js", format: "iife" }];
 const devEntries = [
   { in: "dev/fake-chrome.ts", out: "dev/fake-chrome.js", format: "iife" },
   { in: "dev/harness.ts", out: "dev/harness.js", format: "iife" },
@@ -72,6 +78,12 @@ function copyStatic() {
   walk(src);
 }
 
+/** The web try page: the side panel UI as a normal page (no chrome.*), at the site root. */
+function writeWebPages() {
+  const html = templateHtml(readFileSync(join(root, "static", "sidepanel.html"), "utf8"));
+  writeFileSync(join(dist, "try.html"), html.replace('<html lang="en">', '<html lang="en" data-host="web">'));
+}
+
 /** Dev copies of the extension pages that load the fake `chrome` before the real script. */
 function writeDevPages() {
   mkdirSync(join(dist, "dev"), { recursive: true });
@@ -81,8 +93,9 @@ function writeDevPages() {
     html = html.replace(/<script /, '<script src="fake-chrome.js"></script>\n  <script ');
     writeFileSync(join(dist, "dev", page === "sidepanel.html" ? "panel.html" : page), html);
   }
-  // harness.html is the developer view; demo.html is the same harness with visitor-facing copy (the public demo).
-  for (const page of ["harness.html", "demo.html"]) {
+  // harness.html is the developer view; demo.html is the same harness with visitor-facing copy (the public demo);
+  // store.html is a sample product page with the store widget on it.
+  for (const page of ["harness.html", "demo.html", "store.html"]) {
     writeFileSync(join(dist, "dev", page), templateHtml(readFileSync(join(root, "dev", page), "utf8")));
   }
   // Sample model, garments and their real AI renders used by both pages.
@@ -94,8 +107,17 @@ function writeIcons() {
   for (const size of ICON_SIZES) writeFileSync(join(dist, "icons", `icon-${size}.png`), iconPng(size, brand.colors));
 }
 
+/** Privacy notice and terms, built from docs/legal/*.md (one copy of each text). */
+function writeLegalPages() {
+  const docs = join(root, "..", "docs", "legal");
+  for (const name of ["privacy", "terms"]) {
+    const md = readFileSync(join(docs, `${name}.md`), "utf8");
+    writeFileSync(join(dist, `${name}.html`), legalPage(md, { brandName: brand.name }));
+  }
+}
+
 function writeManifest() {
-  const manifest = buildManifest({ brand, version: pkg.version, apiUrl });
+  const manifest = buildManifest({ brand, version: pkg.version, apiUrl, webUrl });
   writeFileSync(join(dist, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 }
 
@@ -124,14 +146,18 @@ function sizeReport() {
 function writeAssets() {
   copyStatic();
   writeIcons();
+  writeLegalPages();
   writeManifest();
-  if (!release) writeDevPages();
+  if (!release) {
+    writeWebPages();
+    writeDevPages();
+  }
 }
 
 async function main() {
   if (existsSync(dist)) rmSync(dist, { recursive: true, force: true });
   mkdirSync(dist, { recursive: true });
-  const all = release ? entries : [...entries, ...devEntries];
+  const all = release ? entries : [...entries, ...webEntries, ...devEntries];
   const options = all.map((e) => ({
     ...common,
     entryPoints: [join(root, e.in)],

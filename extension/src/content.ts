@@ -8,6 +8,7 @@ import type { DetectedGarment, ExtensionMessage } from "@tryon/shared";
 import { CONTENT_API_KEY } from "./lib/config";
 import type { Rect, Size } from "./lib/image-math";
 import type { PickReply } from "./lib/state";
+import { setShadowRootReader } from "@tryon/detector";
 import { safeCandidates, safeFindImage, safeFromImage, safeFromUrl } from "./lib/detect";
 
 interface ContentApi {
@@ -338,6 +339,11 @@ function rectOf(el: Element): Rect {
 }
 
 function install(): ContentApi {
+  // Extensions can read closed shadow roots too, so galleries inside them get chips.
+  const dom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (el: HTMLElement) => ShadowRoot | null } }).dom;
+  if (dom?.openOrClosedShadowRoot) {
+    setShadowRootReader((el) => (el instanceof HTMLElement ? dom.openOrClosedShadowRoot!(el) : el.shadowRoot));
+  }
   const layer = new ChipLayer();
 
   const api: ContentApi = {

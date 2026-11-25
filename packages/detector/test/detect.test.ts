@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
-import { detectGarmentCandidates, garmentFromImage, garmentFromUrl, isProductPage } from "../src/index";
+import { detectGarmentCandidates, garmentFromImage, garmentFromUrl, isProductPage, setShadowRootReader } from "../src/index";
 import { desiKurta, desiSuit, shoesPdp } from "./fixtures/desi";
 import { gridHover } from "./fixtures/grid-hover";
 import { rejects } from "./fixtures/rejects";
@@ -112,6 +112,24 @@ describe("grid with hover-flip cards", () => {
   });
 });
 
+describe("carousel clones", () => {
+  it("puts the candidate on the copy of the photo that is on screen", () => {
+    const doc = load({
+      url: "https://pk.example-shop.com/geometric-shirt/6-26-406.html",
+      html: `<!doctype html><html><head><title>Geometric Shirt</title>
+        <script type="application/ld+json">{"@context":"https://schema.org","@type":"Product","name":"Geometric Shirt","sku":"6-26-406",
+          "image":"https://pk.example-shop.com/images/6-26-406_1.jpg","offers":{"@type":"Offer","price":"6000","priceCurrency":"PKR"}}</script>
+        </head><body><main><div class="gallery">
+          <img id="clone" src="https://pk.example-shop.com/images/6-26-406_1.jpg" data-test-w="411" data-test-h="616" data-test-x="-9873" data-test-y="-9828">
+          <img id="visible" src="https://pk.example-shop.com/images/6-26-406_1.jpg" data-test-w="411" data-test-h="617" data-test-x="126" data-test-y="171">
+        </div><h1>Geometric Shirt</h1></main></body></html>`,
+    });
+    const cands = detectGarmentCandidates(doc, opts);
+    expect(cands[0]?.element.id).toBe("visible");
+    expect(ids(cands)).not.toContain("clone");
+  });
+});
+
 describe("shadow DOM gallery", () => {
   function setup(): Document {
     const doc = load(shadowPdp);
@@ -148,6 +166,22 @@ describe("shadow DOM gallery", () => {
     expect(all).not.toContain("s-promo");
     expect(all).not.toContain("light-small");
     expect(all).not.toContain("too-deep");
+  });
+
+  it("sees closed shadow roots only through a reader (chrome.dom.openOrClosedShadowRoot in the extension)", () => {
+    const doc = load(shadowPdp);
+    const gallery = doc.querySelector("#gallery-host") as HTMLElement;
+    const closed = gallery.attachShadow({ mode: "closed" });
+    closed.innerHTML = shadowPdp.galleryShadow;
+    expect(gallery.shadowRoot).toBeNull();
+    expect(ids(detectGarmentCandidates(doc, opts))).not.toContain("s-main");
+    setShadowRootReader((el) => (el === gallery ? closed : el.shadowRoot));
+    try {
+      expect(detectGarmentCandidates(doc, opts)[0]?.element.id).toBe("s-main");
+    } finally {
+      setShadowRootReader(null);
+    }
+    expect(ids(detectGarmentCandidates(doc, opts))).not.toContain("s-main");
   });
 
   it("garmentFromUrl finds an image inside a shadow root", () => {

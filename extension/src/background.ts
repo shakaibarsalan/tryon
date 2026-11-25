@@ -6,11 +6,20 @@
 //   (c) report GARMENT_BYTES_FAILED with the image origin so the panel can ask for host permission
 // The current garment lives in chrome.storage.session so a panel opened later picks it up.
 import { LIMITS, normalizeCategory, type DetectedGarment, type ExtensionMessage } from "@tryon/shared";
-import { CONTENT_API_KEY, MENU_ID } from "./lib/config";
+import { CONTENT_API_KEY, MENU_ID, WEB_BASE } from "./lib/config";
 import { dataUrlToBlob } from "./lib/dataurl";
 import { blobToJpeg, encodeJpeg, type EncodedImage } from "./lib/image";
 import { planCrop, type Rect, type Size } from "./lib/image-math";
-import { KEYS, type AnyMessage, type ByteSource, type ConsentRecord, type GarmentState, type PickReply, type Prefs } from "./lib/state";
+import {
+  KEYS,
+  type AccountRecord,
+  type AnyMessage,
+  type ByteSource,
+  type ConsentRecord,
+  type GarmentState,
+  type PickReply,
+  type Prefs,
+} from "./lib/state";
 import { getItem, setItem } from "./lib/store";
 import { errorText, newId, originOf, permissionPatternFor, uniq } from "./lib/util";
 
@@ -438,3 +447,24 @@ async function loadBytes(id: string, src: ByteSource): Promise<void> {
   });
   if (ok) broadcast({ type: "GARMENT_BYTES_FAILED", imageUrl: primary ?? "", reason: lastError, needsHostPermission: missing });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Sign-in hand-off: after "Sign in with Google" on the Try-On site (try.html?signin=1), the page
+// sends our account token here. Only that site can message us (externally_connectable).
+
+const ACCOUNT_TOKEN_RE = /^a1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+chrome.runtime.onMessageExternal?.addListener((raw: unknown, sender, sendResponse) => {
+  const msg = raw as { type?: string; account_token?: unknown } | undefined;
+  if (msg?.type !== "TRYON_ACCOUNT" || sender.origin !== new URL(WEB_BASE).origin) return undefined;
+  if (typeof msg.account_token !== "string" || msg.account_token.length > 512 || !ACCOUNT_TOKEN_RE.test(msg.account_token)) {
+    sendResponse({ ok: false });
+    return undefined;
+  }
+  const record: AccountRecord = { token: msg.account_token, signedInAt: new Date().toISOString() };
+  setItem("local", KEYS.account, record).then(
+    () => sendResponse({ ok: true }),
+    () => sendResponse({ ok: false }),
+  );
+  return true; // answered asynchronously
+});

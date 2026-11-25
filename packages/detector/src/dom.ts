@@ -6,6 +6,18 @@ import { docBase, resolveUrl } from "./url";
 
 export const SHADOW_MAX_DEPTH = 6;
 
+type ShadowRootReader = (el: Element) => ShadowRoot | null;
+const openRootOnly: ShadowRootReader = (el) => el.shadowRoot;
+let readShadowRoot: ShadowRootReader = openRootOnly;
+
+/**
+ * Lets a caller with more access see closed shadow roots too: the extension passes
+ * chrome.dom.openOrClosedShadowRoot. Pass null to go back to open roots only.
+ */
+export function setShadowRootReader(fn: ShadowRootReader | null): void {
+  readShadowRoot = fn ?? openRootOnly;
+}
+
 export interface Measured {
   width: number;
   height: number;
@@ -82,7 +94,7 @@ export function closestAcross(el: Element, selector: string): Element | null {
   return null;
 }
 
-/** All <img> in the document: light DOM first, then open shadow roots (recursive, depth-capped). */
+/** All <img> in the document: light DOM first, then shadow roots (open ones, or any the reader returns; recursive, depth-capped). */
 export function allImages(doc: Document): HTMLImageElement[] {
   const out: HTMLImageElement[] = [];
   const seen = new Set<Element>();
@@ -110,7 +122,7 @@ export function allImages(doc: Document): HTMLImageElement[] {
     for (const el of els) {
       let sr: ShadowRoot | null = null;
       try {
-        sr = el.shadowRoot;
+        sr = readShadowRoot(el);
       } catch {
         sr = null;
       }

@@ -1,5 +1,12 @@
 import type { RenderStatus } from "@tryon/shared";
 
+export interface AccountRow {
+  id: string;
+  /** HMAC of the identity provider's account id. */
+  subject_hash: string;
+  created_at: number;
+}
+
 export interface InstallRow {
   id: string;
   created_at: number;
@@ -24,6 +31,8 @@ export interface RenderRow {
   created_at: number;
   completed_at: number | null;
   ms: number | null;
+  /** Set when the render used this account's monthly quota (not the install's free renders). */
+  account_id: string | null;
 }
 
 export type RenderPatch = Partial<
@@ -67,6 +76,43 @@ export interface Store {
   releaseSpend(day: string, provider: string, amount: number): Promise<void>;
   /** Moves `reserved` out of the reservation and books `actual` as spent. */
   convertSpend(day: string, provider: string, reserved: number, actual: number): Promise<void>;
+
+  /** Deletes an install and all its renders ("Delete all my data"). */
+  deleteInstall(installId: string): Promise<void>;
+
+  /** The account for this subject hash, created with `row` if it doesn't exist yet. */
+  getOrCreateAccount(row: AccountRow): Promise<AccountRow>;
+  getAccount(id: string): Promise<AccountRow | null>;
+  /** Counts one render for the month if fewer than `limit` were used. Returns false otherwise. */
+  consumeAccountRender(accountId: string, month: string, limit: number): Promise<boolean>;
+  refundAccountRender(accountId: string, month: string): Promise<void>;
+  accountRendersUsed(accountId: string, month: string): Promise<number>;
+  /** Deletes an account, its usage and the renders it paid for. */
+  deleteAccount(accountId: string): Promise<void>;
+  /**
+   * Retention cleanup: renders created before `rendersBefore`, IP counters for days before
+   * `ipDayBefore`, installs created before `installsBefore` that have no renders left, account
+   * usage before `usageMonthBefore`, and accounts created before `accountsBefore` with no usage.
+   */
+  purge(cutoffs: PurgeCutoffs): Promise<PurgeCounts>;
+}
+
+export interface PurgeCutoffs {
+  rendersBefore: number;
+  ipDayBefore: string;
+  installsBefore: number;
+  /** Account usage rows for months before this one ("2025-11"). */
+  usageMonthBefore: string;
+  /** Accounts created before this time with no usage rows left. */
+  accountsBefore: number;
+}
+
+export interface PurgeCounts {
+  renders: number;
+  ipDays: number;
+  installs: number;
+  accountMonths: number;
+  accounts: number;
 }
 
 /** Tolerance for float comparisons on USD amounts. */

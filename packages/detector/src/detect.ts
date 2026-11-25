@@ -116,6 +116,21 @@ function keywordReject(img: HTMLImageElement, url: string): boolean {
   return texts.some((text) => hasBadToken(text) && normalizeCategory(text) === "auto");
 }
 
+/** True when a measured box with a known position overlaps the viewport. */
+function onScreen(m: Measured, vw: number, vh: number): boolean {
+  if (m.x === undefined || m.y === undefined) return false;
+  return m.x + m.width > 0 && m.y + m.height > 0 && m.x < vw && m.y < vh;
+}
+
+function viewportHeight(doc: Document): number {
+  try {
+    const h = doc.defaultView?.innerHeight ?? 0;
+    return h > 0 ? h : 1_000_000;
+  } catch {
+    return 1_000_000;
+  }
+}
+
 function viewportWidth(doc: Document): number {
   try {
     const w = doc.defaultView?.innerWidth;
@@ -238,6 +253,7 @@ export function detectGarmentCandidatesImpl(doc: Document, opts?: DetectOptions)
   list.sort((a, b) => b.score - a.score);
 
   // Dedupe by image identity; keep the best-scored element, merge URLs.
+  const vh = viewportHeight(doc);
   const byKey = new Map<string, Evaluated>();
   const unique: Evaluated[] = [];
   for (const e of list) {
@@ -245,6 +261,12 @@ export function detectGarmentCandidatesImpl(doc: Document, opts?: DetectOptions)
     if (prev) {
       addAlts(prev.alts, prev.url, [e.url, ...e.alts]);
       prev.jsonld ||= e.jsonld;
+      // Carousels keep off-screen copies of the same photo (slick's clones, for one). Point the
+      // candidate at the copy people can actually see, so its chip can show.
+      if (!onScreen(prev.m, vw, vh) && onScreen(e.m, vw, vh)) {
+        prev.img = e.img;
+        prev.m = e.m;
+      }
       continue;
     }
     if (e.key) byKey.set(e.key, e);

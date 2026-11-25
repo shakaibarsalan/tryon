@@ -27,6 +27,12 @@ describe("manifest", () => {
     expect(m.content_security_policy.extension_pages).toBe("script-src 'self' 'wasm-unsafe-eval'; object-src 'self'");
   });
 
+  it("lets only the Try-On site message the extension (sign-in hand-off)", () => {
+    expect(m.externally_connectable).toEqual({ matches: ["http://localhost:5178/*"] });
+    const prod = buildManifest({ brand, version: "1.0.0", apiUrl: "https://api.example", webUrl: "https://tryon.example/app/" });
+    expect(prod.externally_connectable).toEqual({ matches: ["https://tryon.example/*"] });
+  });
+
   it("derives host_permissions from TRYON_API", () => {
     const prod = buildManifest({ brand, version: "1.0.0", apiUrl: "https://api.tryon.example/base/" });
     expect(prod.host_permissions).toEqual(["https://api.tryon.example/*"]);

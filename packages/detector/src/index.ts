@@ -79,5 +79,5 @@ function fallbackGarment(url: string): DetectedGarment {
 // Extra helpers (additive; the extension may use them, nothing depends on them yet).
 export { readPageInfo, type PageInfo } from "./page";
 export { findImageByUrl } from "./detect";
-export { allImages, frontImageOf } from "./dom";
+export { allImages, frontImageOf, setShadowRootReader } from "./dom";
 export { imageKey, isShopifyImageUrl, parseSrcset, sameImage, upgradeShopifyUrl } from "./url";

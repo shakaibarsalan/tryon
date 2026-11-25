@@ -1,6 +1,7 @@
 import { createFashnProvider } from "./fashn";
 import { createHfSpaceProvider } from "./hf-space";
 import { createMockProvider } from "./mock";
+import { createSelfHostedProvider } from "./self-hosted";
 import type { Provider } from "./types";
 
 export type { Provider, ProviderPollResult, PollContext, FetchLike } from "./types";
@@ -11,5 +12,6 @@ export function defaultProviders(): Record<string, Provider> {
     mock: createMockProvider(),
     fashn: createFashnProvider(),
     "hf-space": createHfSpaceProvider(),
+    "self-hosted": createSelfHostedProvider(),
   };
 }

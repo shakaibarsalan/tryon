@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yellow embroidered kurti · Sample store</title>
+  <meta property="og:title" content="Yellow embroidered kurti">
+  <meta property="og:image" content="samples/kurti.jpg">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "Yellow embroidered kurti",
+    "category": "Women > Kurtis",
+    "image": ["samples/kurti.jpg"],
+    "sku": "SAMPLE-KURTI-01",
+    "offers": { "@type": "Offer", "price": "2990", "priceCurrency": "PKR", "availability": "https://schema.org/InStock" }
+  }
+  </script>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #222; background: #fff; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 14px 24px; border-bottom: 1px solid #eee; }
+    header strong { letter-spacing: 0.12em; text-transform: uppercase; font-size: 14px; }
+    header nav { display: flex; gap: 18px; font-size: 14px; color: #555; }
+    .note { margin: 0; padding: 8px 24px; background: #fff7e0; color: #6b5200; font-size: 13px; border-bottom: 1px solid #f1e2b3; }
+    main { max-width: 1040px; margin: 0 auto; padding: 28px 24px 80px; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 40px; }
+    .media img { width: 100%; height: auto; display: block; background: #f6f6f6; border-radius: 6px; }
+    .crumbs { font-size: 13px; color: #888; margin-bottom: 8px; }
+    h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; font-weight: 600; }
+    .price { font-size: 20px; margin: 0 0 20px; }
+    .sizes { display: flex; gap: 8px; margin: 8px 0 20px; }
+    .sizes span { border: 1px solid #ccc; border-radius: 4px; padding: 6px 12px; font-size: 14px; }
+    .buy { display: flex; gap: 10px; flex-wrap: wrap; }
+    .buy button { height: 46px; padding: 0 26px; border-radius: 4px; font: inherit; font-weight: 600; cursor: pointer; }
+    .cart { background: #111; color: #fff; border: 0; }
+    .tryon { background: #fff; color: #3b1f4a; border: 2px solid #3b1f4a; }
+    .desc { margin-top: 28px; color: #444; }
+    .events { margin-top: 24px; font-size: 13px; color: #666; }
+    .events code { background: #f3f3f3; padding: 1px 5px; border-radius: 3px; }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; gap: 20px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Sample store</strong>
+    <nav><span>Women</span><span>Men</span><span>Sale</span></nav>
+  </header>
+  <p class="note">A made-up product page for testing the Try-On store widget. The product photo is AI-generated.</p>
+  <main>
+    <div class="media"><img src="samples/kurti.jpg" alt="Yellow embroidered kurti, laid flat" width="600" height="800"></div>
+    <div>
+      <div class="crumbs">Women / Kurtis</div>
+      <h1>Yellow embroidered kurti</h1>
+      <p class="price">Rs 2,990</p>
+      <div>Size</div>
+      <div class="sizes"><span>S</span><span>M</span><span>L</span><span>XL</span></div>
+      <div class="buy">
+        <button type="button" class="cart">Add to cart</button>
+        <button type="button" class="tryon" id="tryon-button">Try it on</button>
+      </div>
+      <p class="desc">Short-sleeve cotton kurti with a woven dot pattern and red embroidery down the placket.</p>
+      <p class="events">Widget events: <code id="event-log">none yet</code></p>
+    </div>
+  </main>
+  <script>
+    document.addEventListener("tryon:event", function (e) {
+      var log = document.getElementById("event-log");
+      log.textContent = (log.textContent === "none yet" ? "" : log.textContent + ", ") + e.detail.event;
+    });
+  </script>
+  <script src="../widget.js" async data-button="#tryon-button"></script>
+</body>
+</html>

@@ -20,6 +20,10 @@ IP_DAILY_LIMIT = "20"
 FASHN_MODE = "balanced" # performance | balanced | quality
 ALLOWED_ORIGINS = "chrome-extension://*,http://localhost:*,http://127.0.0.1:*"
 
+# Nightly retention cleanup (src/retention.ts): ledger rows after 90 days, IP counters after 2.
+[triggers]
+crons = ["17 3 * * *"]
+
 # Production is a separate environment so ENVIRONMENT=production is always set there
 # (that disables the dev token-secret fallback and the hf-space provider).
 # Deploying needs a real database_id; nothing here is deployed by default.
@@ -37,3 +41,6 @@ FREE_RENDERS_PER_INSTALL = "3"
 IP_DAILY_LIMIT = "20"
 FASHN_MODE = "balanced"
 ALLOWED_ORIGINS = "chrome-extension://*"
+
+[env.production.triggers]
+crons = ["17 3 * * *"]

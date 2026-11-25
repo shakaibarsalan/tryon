@@ -49,6 +49,17 @@ function setup(handler: Handler) {
 const request: RenderRequest = { person_image: IMG, garment_image: IMG, category: "tops", client_ref: "local-1" };
 
 describe("API client", () => {
+  it("deletes the install's server data with DELETE /v1/me", async () => {
+    const { client, calls } = setup(() => json({ deleted: true }));
+    await client.deleteMe("tok");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.method).toBe("DELETE");
+    expect(calls[0]!.url).toBe(`${BASE}/v1/me`);
+    expect(calls[0]!.headers[HEADER_INSTALL_TOKEN]).toBe("tok");
+    const failing = setup(() => json({ error: { code: "unauthorized", message: "Unknown install" } }, 401));
+    await expect(failing.client.deleteMe("old")).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
   it("creates an install and reads quota with the token header", async () => {
     const { client, calls } = setup((c) =>
       c.url.endsWith("/v1/installs")

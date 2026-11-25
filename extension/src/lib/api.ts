@@ -1,13 +1,16 @@
 // Client for the Try-On API (Cloudflare Worker). fetch, sleep and clock are injectable for tests.
 import {
+  HEADER_ACCOUNT_TOKEN,
   HEADER_IDEMPOTENCY_KEY,
   HEADER_INSTALL_TOKEN,
   LIMITS,
+  type AccountToken,
   type ApiError,
   type InstallToken,
   type QuotaView,
   type RenderJob,
   type RenderRequest,
+  type ServerConfig,
 } from "@tryon/shared";
 import { friendlyError, type ClientErrorCode } from "./errors";
 
@@ -35,6 +38,8 @@ export interface ApiClientOptions {
   requestTimeoutMs?: number;
   /** Timeout of one status poll. Default 100 s: the dev HF Space provider blocks ~60 s on a poll. */
   pollRequestTimeoutMs?: number;
+  /** The signed-in account's token, sent with every call that sends the install token. */
+  accountToken?: () => string | undefined;
 }
 
 export interface PollOptions {
@@ -111,7 +116,11 @@ export function createApiClient(opts: ApiClientOptions) {
   async function request<T>(method: string, path: string, o: RequestOptions = {}): Promise<T> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (o.body !== undefined) headers["Content-Type"] = "application/json";
-    if (o.token) headers[HEADER_INSTALL_TOKEN] = o.token;
+    if (o.token) {
+      headers[HEADER_INSTALL_TOKEN] = o.token;
+      const account = opts.accountToken?.();
+      if (account) headers[HEADER_ACCOUNT_TOKEN] = account;
+    }
     if (o.idempotencyKey) headers[HEADER_IDEMPOTENCY_KEY] = o.idempotencyKey;
 
     const ctrl = new AbortController();
@@ -179,6 +188,23 @@ export function createApiClient(opts: ApiClientOptions) {
 
     async getMe(token: string, signal?: AbortSignal): Promise<QuotaView> {
       return request<QuotaView>("GET", "/v1/me", { token, signal });
+    },
+
+    /** What the server offers (sign-in, quotas). */
+    async getConfig(signal?: AbortSignal): Promise<ServerConfig> {
+      return request<ServerConfig>("GET", "/v1/config", { signal });
+    },
+
+    /** Swaps a Google ID token for our account token. */
+    async signInWithGoogle(idToken: string, signal?: AbortSignal): Promise<AccountToken> {
+      const t = await request<AccountToken>("POST", "/v1/auth/google", { body: { id_token: idToken }, signal });
+      if (!t || typeof t.account_token !== "string" || !t.account_token) throw new TryOnApiError("internal", "account token missing");
+      return t;
+    },
+
+    /** "Delete all my data": the API deletes this install's record and try-on rows. */
+    async deleteMe(token: string, signal?: AbortSignal): Promise<void> {
+      await request<unknown>("DELETE", "/v1/me", { token, signal, allowEmpty: true });
     },
 
     /**

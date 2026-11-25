@@ -1,0 +1,28 @@
+/* Privacy notice and terms pages (built from docs/legal/*.md). */
+.legal {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.legal h1 { font-size: 28px; margin-bottom: 4px; }
+.legal h1 + p { color: var(--muted); margin-bottom: 20px; }
+.legal h2 { font-size: 19px; margin: 28px 0 8px; }
+.legal h3 { font-size: 16px; margin: 20px 0 6px; }
+.legal p, .legal li { max-width: 68ch; }
+.legal ul { padding-left: 22px; margin: 0 0 12px; }
+.legal li { margin-bottom: 6px; }
+.legal code {
+  font-size: 0.92em;
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.legal-foot {
+  margin-top: 36px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+}

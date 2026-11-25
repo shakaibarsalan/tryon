@@ -77,6 +77,46 @@ export async function verifyInstallToken(secret: string, token: string): Promise
   return { install_id, iat };
 }
 
+export interface AccountTokenPayload {
+  account_id: string;
+  iat: number;
+}
+
+const ACCOUNT_PREFIX = "a1";
+
+/** Account tokens: "a1." + base64url(JSON{account_id, iat}) + "." + HMAC over "account:" + body. */
+export async function signAccountToken(secret: string, payload: AccountTokenPayload): Promise<string> {
+  const body = base64UrlEncode(utf8(JSON.stringify({ account_id: payload.account_id, iat: payload.iat })));
+  const sig = base64UrlEncode(await hmacSha256(secret, `account:${body}`));
+  return `${ACCOUNT_PREFIX}.${body}.${sig}`;
+}
+
+export async function verifyAccountToken(secret: string, token: string): Promise<AccountTokenPayload | null> {
+  if (token.length > 512) return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[0] !== ACCOUNT_PREFIX) return null;
+  const [, body, sig] = parts as [string, string, string];
+  let sigBytes: Uint8Array;
+  let payload: unknown;
+  try {
+    sigBytes = base64UrlDecode(sig);
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body)));
+  } catch {
+    return null;
+  }
+  const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), sigBytes, utf8(`account:${body}`));
+  if (!ok || !payload || typeof payload !== "object") return null;
+  const { account_id, iat } = payload as Record<string, unknown>;
+  if (typeof account_id !== "string" || !UUID_RE.test(account_id)) return null;
+  if (typeof iat !== "number" || !Number.isFinite(iat)) return null;
+  return { account_id, iat };
+}
+
+/** Keyed hash of a Google account id: the only trace of the Google account we keep. */
+export async function hashSubject(secret: string, issuer: string, sub: string): Promise<string> {
+  return toHex(await hmacSha256(secret, `subject:${issuer}:${sub}`));
+}
+
 /** HMAC of (day, ip) so raw IPs are never stored and hashes rotate daily. */
 export async function hashIp(secret: string, day: string, ip: string): Promise<string> {
   return toHex(await hmacSha256(secret, `ip:${day}:${ip}`)).slice(0, 32);

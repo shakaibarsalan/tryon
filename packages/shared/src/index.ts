@@ -57,6 +57,10 @@ export interface RenderJob {
   /** Milliseconds from creation to completion, when completed. */
   ms?: number;
   client_ref?: string;
+  /** 0..1 while processing, when the provider reports progress (self-hosted does). */
+  progress?: number;
+  /** Place in the provider's queue while queued (1 = next), when known. */
+  queue_position?: number;
 }
 
 /** Body of POST /v1/renders/:id/feedback. */
@@ -75,10 +79,33 @@ export interface InstallToken {
 export interface QuotaView {
   install_id: string;
   free_renders_left: number;
+  /** Present when a valid X-Account-Token was sent (signed in). */
+  account?: AccountQuota;
+}
+
+export interface AccountQuota {
+  renders_left_this_month: number;
+  renders_per_month: number;
+}
+
+/** Response of POST /v1/auth/google. */
+export interface AccountToken extends AccountQuota {
+  account_token: string;
+}
+
+/** Response of GET /v1/config: what this server offers clients. */
+export interface ServerConfig {
+  provider: string;
+  free_renders_per_install: number;
+  account_renders_per_month: number;
+  /** Google OAuth client id for "Sign in with Google"; absent when sign-in is off. */
+  google_client_id?: string;
 }
 
 /** Header names. */
 export const HEADER_INSTALL_TOKEN = "X-Install-Token";
+/** Optional: a signed-in account's token, used once the install's free renders are gone. */
+export const HEADER_ACCOUNT_TOKEN = "X-Account-Token";
 export const HEADER_IDEMPOTENCY_KEY = "Idempotency-Key";
 
 /** Limits shared by client and server. */
@@ -93,8 +120,8 @@ export const LIMITS = {
   freeRendersPerInstall: 3,
   /** Client poll interval for render status. */
   pollIntervalMs: 1500,
-  /** Client gives up polling after this long. */
-  pollTimeoutMs: 120_000,
+  /** Client gives up polling after this long. Long enough for a self-hosted render on a laptop GPU. */
+  pollTimeoutMs: 900_000,
 } as const;
 
 /** One garment candidate found on a page by the detector. */

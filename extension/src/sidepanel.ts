@@ -1,17 +1,20 @@
 // Side panel: consent -> your photo -> fitting room (garment, render, results).
-import { LIMITS, normalizeCategory, type Category, type RenderJob, type RenderRequest } from "@tryon/shared";
+import { LIMITS, normalizeCategory, type AccountQuota, type Category, type RenderJob, type RenderRequest, type ServerConfig } from "@tryon/shared";
 import { createApiClient, TryOnApiError } from "./lib/api";
 import { CameraCapture, cameraErrorKind, cameraErrorText, cameraPermissionState, openCameraStream } from "./lib/camera-capture";
-import { API_BASE, BRAND, CONSENT_VERSION, LINKS } from "./lib/config";
+import { API_BASE, BRAND, CONSENT_VERSION, LINKS, WEB_BASE } from "./lib/config";
 import { dataUrlToBlob, extensionForMime, parseDataUrl } from "./lib/dataurl";
 import { clearAll, deletePhoto, deleteResult, getPhoto, listResults, putResult, type PersonPhoto, type StoredResult } from "./lib/db";
 import { parseDropUrl } from "./lib/drop";
 import { friendlyError } from "./lib/errors";
 import { blobToJpeg, makeThumb } from "./lib/image";
 import { prepareUploadedPhoto, storePersonPhoto } from "./lib/photo";
+import { progressLabel } from "./lib/progress";
+import { hostMode, readWidgetGarment, type HostMode, type WidgetEvent, type WidgetGarment } from "./lib/host";
 import {
   DEFAULT_PREFS,
   KEYS,
+  type AccountRecord,
   type AnyMessage,
   type ConsentRecord,
   type GarmentState,
@@ -26,7 +29,17 @@ import { activeTab, currentWindowId, ext, extensionUrl, openTab, setChipsOnTab }
 
 type Screen = "consent" | "photo" | "room";
 
-const api = createApiClient({ baseUrl: API_BASE });
+/** The signed-in account's token, read by the API client on every call. */
+let accountToken: string | undefined;
+const api = createApiClient({ baseUrl: API_BASE, accountToken: () => accountToken });
+
+/**
+ * Where this UI runs: the extension's side panel, the web try page (try.html), or the web page
+ * inside a store's iframe (try.html?embed=1, opened by widget.js). The dev harness has a fake
+ * chrome, so it counts as the extension.
+ */
+const HOST: HostMode = hostMode(!!ext?.runtime?.id, location.search, window.parent !== window);
+document.documentElement.dataset.host = HOST;
 
 const ui = {
   screen: "consent" as Screen,
@@ -40,6 +53,9 @@ const ui = {
   prefs: { ...DEFAULT_PREFS } as Prefs,
   windowId: undefined as number | undefined,
   camera: undefined as CameraCapture | undefined,
+  account: undefined as AccountRecord | undefined,
+  accountQuota: undefined as AccountQuota | undefined,
+  config: undefined as ServerConfig | undefined,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -51,6 +67,7 @@ function showScreen(screen: Screen): void {
   if (screen !== "photo") stopCamera();
   if (screen === "photo") renderPhoto();
   if (screen === "room") renderRoom();
+  renderAccount();
   window.scrollTo({ top: 0 });
 }
 
@@ -108,6 +125,12 @@ async function withToken<T>(fn: (token: string) => Promise<T>): Promise<T> {
 async function refreshQuota(): Promise<void> {
   try {
     const me = await withToken((t) => api.getMe(t));
+    ui.accountQuota = me.account;
+    if (ui.account && !me.account) {
+      // The server no longer knows this account (deleted, or a token from another server).
+      await removeItem("local", KEYS.account);
+      setAccount(undefined);
+    }
     setQuota(me.free_renders_left);
   } catch (e) {
     console.debug("[try-on] quota unavailable:", errorText(e));
@@ -122,10 +145,22 @@ function setQuota(n: number | undefined): void {
     q.hidden = true;
   } else {
     q.hidden = false;
-    q.textContent = ui.quota > 0 ? `${ui.quota} free try-on${ui.quota === 1 ? "" : "s"} left` : "No free try-ons left";
-    q.classList.toggle("empty", ui.quota <= 0);
+    const monthly = ui.accountQuota?.renders_left_this_month;
+    q.textContent =
+      ui.quota > 0
+        ? `${ui.quota} free try-on${ui.quota === 1 ? "" : "s"} left`
+        : monthly !== undefined
+          ? `${monthly} try-on${monthly === 1 ? "" : "s"} left this month`
+          : "No free try-ons left";
+    q.classList.toggle("empty", ui.quota <= 0 && !monthly);
   }
   renderTryButton();
+  renderAccount();
+}
+
+/** True when neither the install's free try-ons nor the account's monthly ones are left. */
+function outOfTryOns(): boolean {
+  return ui.quota === 0 && !(ui.accountQuota && ui.accountQuota.renders_left_this_month > 0);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -158,6 +193,21 @@ function stopCamera(): void {
 
 async function takePhoto(): Promise<void> {
   photoStatus(undefined);
+  if (HOST !== "extension") {
+    // A normal page can show the camera prompt itself.
+    try {
+      startInlineCamera(await openCameraStream());
+    } catch (e) {
+      const kind = cameraErrorKind(e);
+      photoStatus(
+        kind === "denied" || kind === "dismissed"
+          ? "Camera access was blocked. Allow the camera for this site in your browser, or upload a photo instead."
+          : cameraErrorText(kind),
+        true,
+      );
+    }
+    return;
+  }
   const perm = await cameraPermissionState();
   // The side panel can't show the permission prompt, so only try here once access is granted.
   if (perm === "granted" || perm === "unknown") {
@@ -191,6 +241,7 @@ function startInlineCamera(stream: MediaStream): void {
       renderPhoto();
       photoStatus(p.warnings[0]);
       toast("Photo saved in this browser");
+      notifyStore("photo_added");
     },
     onCancel: () => {
       ui.camera = undefined;
@@ -214,6 +265,7 @@ async function handlePhotoFile(file: File): Promise<void> {
     renderPhoto();
     photoStatus(check.warnings[0]);
     toast("Photo saved in this browser");
+    notifyStore("photo_added");
   } catch (e) {
     photoStatus(`Couldn't use that photo: ${errorText(e)}`, true);
   }
@@ -384,6 +436,209 @@ function wireGarment(): void {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Sign-in (optional): Sign in with Google for more free try-ons every month. Web pages show
+// Google's own button; the extension opens the web page (try.html?signin=1&ext=<id>), which
+// hands our account token back through externally_connectable.
+
+const SIGNIN_PAGE = HOST !== "extension" && new URLSearchParams(location.search).has("signin");
+let gis: Promise<GoogleId> | undefined;
+
+interface GoogleId {
+  initialize(o: { client_id: string; callback: (r: { credential?: string }) => void; auto_select?: boolean }): void;
+  renderButton(el: HTMLElement, o: Record<string, string>): void;
+  disableAutoSelect(): void;
+}
+
+function setAccount(rec: AccountRecord | undefined): void {
+  ui.account = rec;
+  accountToken = rec?.token;
+  if (!rec) ui.accountQuota = undefined;
+}
+
+function loadGoogle(): Promise<GoogleId> {
+  gis ??= new Promise<GoogleId>((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://accounts.google.com/gsi/client";
+    s.async = true;
+    s.onload = () => {
+      const id = (window as unknown as { google?: { accounts?: { id?: GoogleId } } }).google?.accounts?.id;
+      if (id) resolve(id);
+      else reject(new Error("Google sign-in didn't load"));
+    };
+    s.onerror = () => reject(new Error("Google sign-in didn't load"));
+    document.head.append(s);
+  }).catch((e) => {
+    gis = undefined;
+    throw e;
+  });
+  return gis;
+}
+
+async function showGoogleButton(clientId: string): Promise<void> {
+  const box = $("account-google");
+  if (box.childElementCount) return;
+  try {
+    const id = await loadGoogle();
+    id.initialize({ client_id: clientId, callback: (r) => void onGoogleCredential(r.credential), auto_select: false });
+    id.renderButton(box, { theme: "outline", size: "large", text: "signin_with", shape: "pill" });
+  } catch (e) {
+    setText("account-error", `Sign-in isn't available right now: ${errorText(e)}`);
+  }
+}
+
+/** Hands the account token to the extension that opened this page (externally_connectable). */
+function sendToExtension(extId: string, token: string): Promise<boolean> {
+  const rt = (window as unknown as { chrome?: { runtime?: { sendMessage?: (id: string, m: unknown, cb: (r: unknown) => void) => void } } })
+    .chrome?.runtime;
+  if (!rt?.sendMessage || !/^[a-p]{32}$/.test(extId)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      rt.sendMessage!(extId, { type: "TRYON_ACCOUNT", account_token: token }, (r) => resolve(!!(r as { ok?: boolean } | undefined)?.ok));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function onGoogleCredential(credential: string | undefined): Promise<void> {
+  if (!credential) return;
+  setText("account-error", undefined);
+  try {
+    const t = await api.signInWithGoogle(credential);
+    const rec: AccountRecord = { token: t.account_token, signedInAt: new Date().toISOString() };
+    await setItem("local", KEYS.account, rec);
+    setAccount(rec);
+    ui.accountQuota = { renders_left_this_month: t.renders_left_this_month, renders_per_month: t.renders_per_month };
+    const extId = new URLSearchParams(location.search).get("ext");
+    if (SIGNIN_PAGE && extId) {
+      const handed = await sendToExtension(extId, rec.token);
+      setText("account-text", handed ? "You're signed in. Close this tab and go back to Try-On." : "Signed in, but the extension didn't answer. Open Try-On and sign in again.");
+    } else {
+      toast("Signed in");
+    }
+    setQuota(ui.quota);
+  } catch (e) {
+    setText("account-error", `Sign-in failed: ${e instanceof TryOnApiError ? e.message : errorText(e)}`);
+  }
+}
+
+function renderAccount(): void {
+  const box = $("account-box");
+  const clientId = ui.config?.google_client_id;
+  const perMonth = ui.config?.account_renders_per_month ?? 0;
+  const relevant = SIGNIN_PAGE || (ui.screen === "room" && (!!ui.account || ui.quota === 0));
+  box.hidden = !clientId || perMonth <= 0 || !relevant;
+  if (box.hidden || !clientId) return;
+  const signedIn = !!ui.account && !SIGNIN_PAGE;
+  $("account-signout").hidden = !signedIn;
+  $("account-signin").hidden = signedIn || HOST !== "extension";
+  $("account-google").hidden = signedIn || HOST === "extension";
+  if (signedIn) {
+    const left = ui.accountQuota?.renders_left_this_month;
+    setText("account-text", left === undefined ? "Signed in with Google." : `Signed in with Google. ${left} of ${perMonth} free try-ons left this month.`);
+  } else {
+    if (!$("account-text").textContent || !SIGNIN_PAGE) {
+      setText("account-text", `Sign in with Google for ${perMonth} free try-ons every month. We keep no email or name.`);
+    }
+    if (HOST !== "extension") void showGoogleButton(clientId);
+  }
+}
+
+function wireAccount(): void {
+  $("account-signin").addEventListener("click", () => {
+    const id = ext?.runtime?.id ?? "";
+    openTab(`${WEB_BASE}/try.html?signin=1&ext=${encodeURIComponent(id)}`);
+  });
+  $("account-signout").addEventListener("click", async () => {
+    await removeItem("local", KEYS.account);
+    setAccount(undefined);
+    gis?.then((id) => id.disableAutoSelect()).catch(() => undefined);
+    setQuota(ui.quota);
+    toast("Signed out");
+  });
+  // The extension gets the account from the web page through the service worker.
+  onItemChange("local", KEYS.account, (v) => {
+    setAccount(v as AccountRecord | undefined);
+    void refreshQuota();
+  });
+  if (SIGNIN_PAGE) {
+    document.documentElement.classList.add("signin-only");
+    $("account-title").hidden = false;
+  }
+}
+
+async function loadAccount(): Promise<void> {
+  setAccount(await getItem<AccountRecord>("local", KEYS.account));
+  try {
+    ui.config = await api.getConfig();
+  } catch (e) {
+    console.debug("[try-on] config unavailable:", errorText(e));
+  }
+  renderAccount();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Store widget: try.html?embed=1 inside the store's iframe (see lib/host.ts for the messages)
+
+const PROVIDER_CATEGORIES = new Set<string>(["tops", "bottoms", "one-pieces", "unsupported"]);
+
+function notifyStore(event: WidgetEvent): void {
+  if (HOST === "embed") window.parent.postMessage({ type: "TRYON_EVENT", event }, "*");
+}
+
+async function setGarmentFromWidget(g: WidgetGarment, origin: string): Promise<void> {
+  const hint = g.category && PROVIDER_CATEGORIES.has(g.category) ? (g.category as GarmentState["categoryGuess"]) : undefined;
+  const guess = hint ?? normalizeCategory(g.category);
+  const base: GarmentState = {
+    id: newId(),
+    status: "loading",
+    pickedAt: Date.now(),
+    imageUrl: g.imageUrl ?? g.dataUrl,
+    source: "widget",
+    title: g.title,
+    pageOrigin: safeOrigin(origin),
+    categoryGuess: guess === "auto" ? normalizeCategory(g.title) : guess,
+  };
+  await setItem("session", KEYS.garment, base);
+  onGarmentChanged(base);
+  let next: GarmentState;
+  try {
+    let blob: Blob;
+    if (g.dataUrl) {
+      blob = dataUrlToBlob(g.dataUrl);
+    } else {
+      // The store page couldn't read the bytes; this page tries (works when the CDN allows CORS).
+      const res = await fetch(g.imageUrl!, { mode: "cors", credentials: "omit" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      blob = await res.blob();
+    }
+    const enc = await blobToJpeg(blob, LIMITS.garmentMaxSide, { quality: 0.92 });
+    next = { ...base, status: "ready", dataUrl: enc.dataUrl, width: enc.width, height: enc.height };
+  } catch (e) {
+    console.debug("[try-on] widget garment failed:", errorText(e));
+    next = { ...base, status: "failed", error: "We couldn't load this product image. Save it to your device and use Upload garment." };
+  }
+  // Ignore a late result if another garment arrived meanwhile.
+  if (ui.garment && ui.garment.id !== base.id) return;
+  await setItem("session", KEYS.garment, next);
+  onGarmentChanged(next);
+}
+
+function wireEmbed(): void {
+  if (HOST === "extension") {
+    return;
+  }
+  setText("garment-hint", "or upload a photo of the product");
+  if (HOST !== "embed") return;
+  window.addEventListener("message", (e) => {
+    if (e.source !== window.parent) return;
+    const g = readWidgetGarment(e.data);
+    if (g) void setGarmentFromWidget(g, e.origin);
+  });
+  window.parent.postMessage({ type: "TRYON_READY" }, "*");
+}
+
+// ---------------------------------------------------------------------------------------------
 // Drag and drop (images from the page, or files)
 
 function wireDrop(): void {
@@ -452,7 +707,7 @@ function renderTryButton(): void {
   }
   btn.textContent = "Try it on";
   const blocked = g?.categoryGuess === "unsupported" && !ui.categoryOverride;
-  btn.disabled = !g || g.status !== "ready" || !g.dataUrl || blocked || ui.quota === 0;
+  btn.disabled = !g || g.status !== "ready" || !g.dataUrl || blocked || outOfTryOns();
 }
 
 let tickTimer: ReturnType<typeof setInterval> | undefined;
@@ -474,7 +729,7 @@ function hideTryError(): void {
 }
 
 /** Codes where the server's own reason helps the user (or us) more than the generic text. */
-const DETAIL_CODES = new Set(["provider_error", "internal", "bad_request", "image_invalid"]);
+const DETAIL_CODES = new Set(["provider_error", "internal", "bad_request", "image_invalid", "pose_not_found"]);
 
 function showTryError(e: unknown): void {
   const code = e instanceof TryOnApiError ? e.code : "internal";
@@ -518,6 +773,7 @@ async function tryOn(): Promise<void> {
       client_ref: localId,
     };
     const job = await withToken((t) => api.createRender(t, body, localId));
+    notifyStore("render_started");
     const pending: PendingRender = {
       renderId: job.id,
       localId,
@@ -530,8 +786,10 @@ async function tryOn(): Promise<void> {
     };
     await setItem("local", KEYS.pendingRender, pending);
     await finishRender(pending, job);
+    notifyStore("render_completed");
   } catch (e) {
     showTryError(e);
+    notifyStore("render_failed");
   } finally {
     await removeItem("local", KEYS.pendingRender).catch(() => {});
     ui.rendering = false;
@@ -542,15 +800,17 @@ async function tryOn(): Promise<void> {
 }
 
 async function finishRender(p: PendingRender, initial?: RenderJob): Promise<void> {
-  const label = () => "Creating your look…";
-  setProgress(label(), p.startedAt);
+  setProgress("Creating your look…", p.startedAt);
   const token = await ensureToken();
   const job = await api.pollRender(
     token,
     p.renderId,
     {
       timeoutMs: Math.max(5_000, LIMITS.pollTimeoutMs - (Date.now() - p.startedAt)),
-      onUpdate: (j) => setProgress(label(), p.startedAt, j.status === "queued" ? "Waiting in line…" : "Creating your look…"),
+      onUpdate: (j) => {
+        const label = progressLabel(j);
+        setProgress(label, p.startedAt, label);
+      },
     },
     initial,
   );
@@ -744,8 +1004,24 @@ function wireDeleteAll(): void {
   });
 }
 
+/** Asks the API to delete this install's record and ledger rows. False if it couldn't be reached. */
+async function deleteServerData(): Promise<boolean> {
+  const rec = await getItem<InstallRecord>("local", KEYS.install).catch(() => undefined);
+  if (!rec?.token) return true;
+  try {
+    await api.deleteMe(rec.token);
+    return true;
+  } catch (e) {
+    // An unknown install means there is nothing left on the server.
+    if (e instanceof TryOnApiError && e.code === "unauthorized") return true;
+    console.debug("[try-on] server data not deleted:", errorText(e));
+    return false;
+  }
+}
+
 async function deleteEverything(): Promise<void> {
   stopCamera();
+  const serverDone = await deleteServerData();
   await setChipsOnTab(await activeTab(), false).catch(() => undefined);
   await clearAll().catch((e) => console.warn("[try-on] IndexedDB clear failed", e));
   await clearArea("local");
@@ -764,7 +1040,12 @@ async function deleteEverything(): Promise<void> {
   for (const b of Array.from(document.querySelectorAll<HTMLInputElement>("#consent-form input[type=checkbox]"))) b.checked = false;
   $<HTMLButtonElement>("consent-accept").disabled = true;
   showScreen("consent");
-  toast("All your data was deleted from this browser.");
+  toast(
+    serverDone
+      ? "All your data was deleted from this browser and from our server."
+      : "Your data was deleted from this browser. We couldn't reach our server; its try-on records are deleted after 90 days.",
+    serverDone ? undefined : 8000,
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -782,8 +1063,7 @@ function wireLinks(): void {
       e.preventDefault();
       const key = a.dataset.link as keyof typeof LINKS;
       const url = LINKS[key];
-      if (url) openTab(url);
-      else toast(key === "privacy" ? "The privacy notice will be published before public launch." : "Terms will be published before public launch.");
+      if (url) openTab(extensionUrl(url));
     });
   }
 }
@@ -833,8 +1113,12 @@ async function boot(): Promise<void> {
   wireDeleteAll();
   wireLinks();
   wireRuntime();
+  wireEmbed();
+  wireAccount();
   ui.windowId = await currentWindowId();
   void sendRuntime({ type: "PANEL_STATE", open: true } satisfies AnyMessage);
+  await loadAccount();
+  if (SIGNIN_PAGE) return; // only the sign-in box: no consent or photo needed to sign in
 
   const consent = await getItem<ConsentRecord>("local", KEYS.consent);
   if (!consent || consent.version !== CONSENT_VERSION) {

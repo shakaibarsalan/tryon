@@ -2,7 +2,7 @@ import { HEADER_IDEMPOTENCY_KEY, HEADER_INSTALL_TOKEN, type InstallToken, type R
 import { createApp, type App } from "../src/app";
 import type { Env } from "../src/env";
 import { createMockProvider } from "../src/providers/mock";
-import type { Provider } from "../src/providers/types";
+import type { FetchLike, Provider } from "../src/providers/types";
 import { MemoryStore } from "../src/store/memory";
 import { bytesToBase64 } from "../src/util";
 
@@ -58,13 +58,16 @@ export interface Harness {
 
 let keyCounter = 0;
 
-export function harness(opts: { env?: Partial<Env>; providers?: Record<string, Provider>; now?: () => number } = {}): Harness {
+export function harness(
+  opts: { env?: Partial<Env>; providers?: Record<string, Provider>; now?: () => number; googleFetch?: FetchLike } = {},
+): Harness {
   const store = new MemoryStore();
   const env = makeEnv(opts.env);
   const app = createApp({
     store: () => store,
     providers: opts.providers ?? { mock: createMockProvider(), paid: paidProvider() },
     now: opts.now,
+    googleFetch: opts.googleFetch,
   });
   const call: Harness["call"] = (method, path, init = {}) => {
     const headers: Record<string, string> = { ...init.headers };

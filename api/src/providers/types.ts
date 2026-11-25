@@ -6,6 +6,10 @@ export interface ProviderPollResult {
   /** Data URL of the result, when completed and still available. */
   imageDataUrl?: string;
   error?: ApiError;
+  /** 0..1 while processing, when the provider reports it. */
+  progress?: number;
+  /** Place in the provider's queue (1 = next), when the provider reports it. */
+  queuePosition?: number;
 }
 
 /** Context passed to poll(); images are never persisted so they are not part of it. */

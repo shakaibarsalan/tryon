@@ -10,9 +10,9 @@ export function apiOrigin(apiUrl) {
 }
 
 /**
- * @param {{ brand: { name: string, shortName?: string, description: string }, version: string, apiUrl: string }} o
+ * @param {{ brand: { name: string, shortName?: string, description: string }, version: string, apiUrl: string, webUrl?: string }} o
  */
-export function buildManifest({ brand, version, apiUrl }) {
+export function buildManifest({ brand, version, apiUrl, webUrl = "http://localhost:5178" }) {
   const icons = Object.fromEntries(ICON_SIZES.map((s) => [String(s), `icons/icon-${s}.png`]));
   return {
     manifest_version: 3,
@@ -34,5 +34,7 @@ export function buildManifest({ brand, version, apiUrl }) {
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
+    // Only the Try-On site may message the extension: it hands over the account token after sign-in.
+    externally_connectable: { matches: [`${apiOrigin(webUrl)}/*`] },
   };
 }

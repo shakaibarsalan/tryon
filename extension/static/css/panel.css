@@ -163,3 +163,18 @@ html, body { min-height: 100%; }
 .camera-inline { margin-top: 4px; }
 
 .notice .error-detail { display: inline-block; margin-top: 4px; opacity: 0.8; font-size: 11px; line-height: 1.35; }
+
+/* Web try page (try.html) and the store widget's iframe: no page buttons, centred column. */
+[data-host="web"] .chips-row,
+[data-host="embed"] .chips-row { display: none; }
+[data-host="web"] .app { max-width: 480px; margin: 0 auto; }
+
+/* Optional sign-in box */
+.account { display: grid; gap: 8px; margin-top: 12px; padding: 12px 14px; }
+.account .account-text { margin: 0; }
+.account-google:empty { display: none; }
+.account .link { justify-self: start; }
+/* try.html?signin=1: the extension's sign-in page shows only the sign-in box. */
+.signin-only #screen-room { display: block !important; }
+.signin-only #screen-room > :not(#account-box) { display: none !important; }
+.signin-only #account-box { margin: 24px auto; max-width: 420px; }

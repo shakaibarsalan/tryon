@@ -4,4 +4,5 @@ export declare function buildManifest(o: {
   brand: { name: string; shortName?: string; description: string };
   version: string;
   apiUrl: string;
+  webUrl?: string;
 }): Record<string, any>;

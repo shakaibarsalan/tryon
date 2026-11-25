@@ -1,7 +1,7 @@
 // CORS: reflect the request Origin when it matches one of ALLOWED_ORIGINS.
 // Patterns: "chrome-extension://*", "http://localhost:*", "https://*.example.com", "https://app.example.com".
 // "*" as the host matches any host; "*." as a host prefix matches subdomains; ":*" matches any port (or none).
-import { HEADER_IDEMPOTENCY_KEY, HEADER_INSTALL_TOKEN } from "@tryon/shared";
+import { HEADER_ACCOUNT_TOKEN, HEADER_IDEMPOTENCY_KEY, HEADER_INSTALL_TOKEN } from "@tryon/shared";
 
 interface OriginPattern {
   scheme: string;
@@ -42,7 +42,7 @@ export function originAllowed(origin: string | null, patterns: string[]): boolea
   return false;
 }
 
-const ALLOW_HEADERS = ["Content-Type", HEADER_INSTALL_TOKEN, HEADER_IDEMPOTENCY_KEY].join(", ");
+const ALLOW_HEADERS = ["Content-Type", HEADER_INSTALL_TOKEN, HEADER_ACCOUNT_TOKEN, HEADER_IDEMPOTENCY_KEY].join(", ");
 const EXPOSE_HEADERS = ["Retry-After", "Idempotent-Replayed"].join(", ");
 
 export function corsHeaders(origin: string | null, patterns: string[]): Record<string, string> {
@@ -64,7 +64,7 @@ export function preflight(request: Request, patterns: string[]): Response {
     status: 204,
     headers: {
       ...corsHeaders(origin, patterns),
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": ALLOW_HEADERS,
       "Access-Control-Max-Age": "86400",
     },

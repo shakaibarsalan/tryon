@@ -61,3 +61,8 @@ export function sniffImageMime(bytes: Uint8Array): ImageMime | null {
   }
   return null;
 }
+
+/** UTC calendar month, e.g. "2026-11". */
+export function utcMonth(nowMs: number): string {
+  return new Date(nowMs).toISOString().slice(0, 7);
+}
