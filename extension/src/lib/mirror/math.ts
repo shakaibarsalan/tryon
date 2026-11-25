@@ -163,38 +163,6 @@ export function toCanvas(
   return { x: mirrored ? crop.sw - x : x, y: lm.y * video.height - crop.sy };
 }
 
-/** Exponential smoothing per anchor, so the garment doesn't jitter with the landmarks. */
-export class AnchorSmoother {
-  private last: Anchors = {};
-  private misses: Partial<Record<AnchorKey, number>> = {};
-  constructor(
-    private readonly alpha = 0.5,
-    private readonly keepFrames = 6,
-  ) {}
-
-  next(raw: Anchors): Anchors {
-    const out: Anchors = {};
-    for (const key of Object.keys(LANDMARK) as AnchorKey[]) {
-      const p = raw[key];
-      const prev = this.last[key];
-      if (p) {
-        out[key] = prev ? { x: prev.x + this.alpha * (p.x - prev.x), y: prev.y + this.alpha * (p.y - prev.y) } : p;
-        this.misses[key] = 0;
-      } else if (prev && (this.misses[key] ?? 0) < this.keepFrames) {
-        out[key] = prev; // a missed frame or two: hold the last position
-        this.misses[key] = (this.misses[key] ?? 0) + 1;
-      }
-    }
-    this.last = out;
-    return out;
-  }
-
-  reset(): void {
-    this.last = {};
-    this.misses = {};
-  }
-}
-
 /**
  * Background mask for a product photo without a person (flat-lay or ghost mannequin): pixels close
  * to the border colour that connect to the border. Returns alpha 0..255 per pixel (255 = garment).

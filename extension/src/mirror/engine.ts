@@ -15,7 +15,6 @@ import { LIMITS } from "@tryon/shared";
 import { encodeJpeg } from "../lib/image";
 import { planPortraitCrop, type CropPlan } from "../lib/image-math";
 import {
-  AnchorSmoother,
   LANDMARK,
   borderColour,
   cutOutFlatLay,
@@ -32,6 +31,7 @@ import {
 import { InlineLane, WorkerLane, readMask, readPose, startWorker, type Lane, type Landmark, type MaskAnswer, type WorkerLike } from "../lib/mirror/lanes";
 import { POSE_MODEL, POSE_SETTINGS, SEGMENT_MODEL } from "../lib/mirror/models";
 import { QualityGovernor } from "../lib/mirror/quality";
+import { AnchorTracker } from "../lib/mirror/track";
 import { buildMesh, deformMesh, type GarmentMesh } from "../lib/mirror/skin";
 import { ENGINE_GLOBAL, type MirrorEngine, type MirrorGarment, type MirrorSession, type MirrorStatus, type PreparedGarmentInfo } from "../lib/mirror/types";
 import { MirrorRenderer, type Capsule } from "./gl";
@@ -389,8 +389,17 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   // Developer timings: add #mirror-profile to the page address. Each second globalThis.__mirrorProfile
   // gets the average milliseconds per stage, a number in globalThis.__mirrorLevel pins the speed step,
   // and globalThis.__mirrorSync = true also waits for the GPU after each frame (slows the mirror down).
+  // globalThis.__mirrorTrace keeps the last minute of body points and frame times, to replay smoothing
+  // and prediction offline (lib/mirror/track.ts).
   const profile = /mirror-profile/.test(location.hash);
-  const dev = globalThis as unknown as { __mirrorProfile?: Record<string, number>; __mirrorLevel?: number; __mirrorSync?: boolean };
+  const dev = globalThis as unknown as {
+    __mirrorProfile?: Record<string, number>;
+    __mirrorLevel?: number;
+    __mirrorSync?: boolean;
+    __mirrorTrace?: { width: number; height: number; frames: number[]; poses: { at: number; recv: number; raw: Anchors }[] };
+  };
+  const trace = profile ? { width: 0, height: 0, frames: [] as number[], poses: [] as { at: number; recv: number; raw: Anchors }[] } : null;
+  if (trace) dev.__mirrorTrace = trace;
   const spent: Record<string, number> = {};
   const lap = (stage: string, since: number): number => {
     const t = performance.now();
@@ -511,7 +520,8 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
     fill = blend(fill, bgAcc, 0.3);
   };
 
-  const smoother = new AnchorSmoother(0.55);
+  // Smooths the body points and carries them forward to the frame being drawn (lib/mirror/track.ts).
+  const tracker = new AnchorTracker();
   let garment: PreparedGarment | null = null;
   let garmentToken = 0;
   let preparing = false;
@@ -566,8 +576,12 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         if (lanes.pose.at !== poseAt) {
           poseAt = lanes.pose.at;
           const raw = anchorsFrom(lanes.pose.latest ?? undefined, (p) => toCanvas(p, { width: videoW, height: videoH }, crop, false));
-          target = smoother.next(raw);
+          tracker.update(raw, poseAt);
           if (raw.ls || raw.lh) lastSeen = now;
+          if (trace) {
+            trace.poses.push({ at: poseAt, recv: now, raw });
+            if (trace.poses.length > 2400) trace.poses.splice(0, 600);
+          }
         }
         const m = lanes.segment.latest;
         if (level.segmentEvery === 0) mask = null;
@@ -577,6 +591,14 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
           maskW = m.width;
           maskH = m.height;
         }
+      }
+      // Where the body is now: the newest answer is for a frame taken a little earlier.
+      target = tracker.at(now);
+      if (trace) {
+        trace.width = crop.sw;
+        trace.height = crop.sh;
+        trace.frames.push(now);
+        if (trace.frames.length > 2400) trace.frames.splice(0, 600);
       }
       const liveMask = mask && now - maskAt < MASK_MAX_AGE_MS ? mask : null;
       if (frames % 12 === 0) sample(liveMask);

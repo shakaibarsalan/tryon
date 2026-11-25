@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  AnchorSmoother,
   alphaBox,
   applyAffine,
   cutOutFlatLay,
@@ -82,17 +81,6 @@ describe("toCanvas", () => {
     const crop = { sx: 140, sy: 0, sw: 360, sh: 480 };
     expect(toCanvas({ x: 0.5, y: 0.5 }, video, crop, false)).toEqual({ x: 180, y: 240 });
     expect(toCanvas({ x: 0.25, y: 0.5 }, video, crop, true)).toEqual({ x: 340, y: 240 });
-  });
-});
-
-describe("AnchorSmoother", () => {
-  it("eases towards new points and holds through short dropouts", () => {
-    const s = new AnchorSmoother(0.5, 2);
-    expect(s.next({ ls: { x: 0, y: 0 } }).ls).toEqual({ x: 0, y: 0 });
-    expect(s.next({ ls: { x: 10, y: 20 } }).ls).toEqual({ x: 5, y: 10 });
-    expect(s.next({}).ls).toEqual({ x: 5, y: 10 });
-    expect(s.next({}).ls).toEqual({ x: 5, y: 10 });
-    expect(s.next({}).ls).toBeUndefined();
   });
 });
 
