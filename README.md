@@ -3,7 +3,7 @@
 See clothes from any online store on you before you buy: live on your camera, or as an AI photo.
 
 [![Live demo](https://img.shields.io/badge/live%20demo-tryonlab.vercel.app-3b1f4a)](https://tryonlab.vercel.app)
-[![Tests](https://img.shields.io/badge/tests-279%20%2B%2029%20passing-2e7d4f)](#run-it)
+[![Tests](https://img.shields.io/badge/tests-293%20%2B%2029%20passing-2e7d4f)](#run-it)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](tsconfig.base.json)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3%20extension-4285f4)](extension)
 [![Cloudflare Workers](https://img.shields.io/badge/API-Cloudflare%20Workers-f38020)](api)
@@ -32,7 +32,7 @@ Three pieces share one API: the **Chrome extension** for shoppers, a **store scr
 
 ![Demo: agree to the consent screen, use the sample model, pick the kurti and then the dress, and get the AI renders](docs/images/demo.gif)
 
-Use the sample model with any of the three garments and the panel returns the real render above. The hosted demo is the October build: it doesn't have the live mirror yet, because that needs the extension (or the new web page) and a camera.
+Use the sample model with any of the three garments and the panel returns the real render above. The live mirror works there too: open it, allow the camera, and the garment you picked appears on you. No render server sits behind the demo, so an AI photo of anyone but the sample model comes back as a labelled preview.
 
 A recording of the live mirror and an AI render made on the Mac, in the extension, is in [docs/media/try-on-demo.mp4](docs/media/try-on-demo.mp4). The person in it is the AI-generated sample model, fed to Chrome as a fake webcam.
 
@@ -40,9 +40,9 @@ A recording of the live mirror and an AI render made on the Mac, in the extensio
 
 ![The live mirror in the side panel: the AI sample model on a fake webcam, wearing the yellow kurti from the sample store as she sways](docs/images/live-mirror.gif)
 
-Every camera frame, on the device:
+On the device, for every camera frame:
 
-1. MediaPipe's pose model finds shoulders, elbows, wrists, hips, knees and ankles, and its segmenter labels skin, hair, clothes and background.
+1. MediaPipe's pose model finds shoulders, elbows, wrists, hips, knees and ankles, and its segmenter labels skin, hair, clothes and background. Both run in Web Workers, so a slow model never holds up the picture (see [below](#on-slower-laptops-and-phones)).
 2. The garment was cut out of its product photo once when you picked it: with the clothes segmenter when a model wears it (a regular top stops near the hips, so same-colour shorts don't come along; kurtas and tunics keep their length), or by removing the plain background when it's laid flat.
 3. The cut-out is a mesh skinned to the body. Each point of it is tied to the torso and the nearest limb bones, so sleeves bend with your elbows and wrists and a skirt follows your legs.
 4. WebGL draws the frame. Your own clothes that the new garment replaces (picked out by colour, so a new top doesn't take your jeans) become skin on your body and the room behind loose fabric. Small gaps are covered by the garment's edge. Your hands stay in front of the garment when they're across your body.
@@ -50,6 +50,21 @@ Every camera frame, on the device:
 "Make it real" saves the current frame as your photo and starts the AI try-on from it.
 
 It is still a moving cut-out of the product photo, so it shows the garment from the front only, without cloth physics. See [Limitations](#limitations).
+
+### On slower laptops and phones
+
+The segmenter is the expensive part: 40-90 ms a frame on an M1 Pro's GPU, over 200 ms on its CPU. When both models ran on the page, every frame waited for them. Now the page draws each camera frame with the newest answers it has, and the models catch up as fast as the device lets them. Body tracking runs on the CPU, because on the GPU it queued behind every segmentation; the segmenter stays on the GPU.
+
+Measured on a MacBook Pro M1 Pro with a 30 fps camera (the AI sample model as a fake webcam):
+
+| | Models on the page (before) | Models in workers (now) |
+|---|---|---|
+| Full quality | 11 fps | 30 fps, 20-29 body updates and about 15 clothes masks a second |
+| Mac busy with other work (each at the step it settled on) | 7 fps | 26-28 fps |
+
+When tracking falls behind the camera, the mirror steps down: fewer clothes masks, then it stops taking the old clothes off, then it tracks the body only. A webcam that is slow on its own, like 15 fps in a dim room, isn't mistaken for a slow computer.
+
+It hasn't been measured on a low-end laptop or a phone yet. Phones can't run Chrome extensions, so a phone uses the web page. A first visit there downloads about 24 MB (the MediaPipe runtime and two models). The camera shows while they load, and the browser keeps them afterwards. The extension has them built in.
 
 ## AI photos on your own Mac
 
@@ -103,7 +118,7 @@ flowchart LR
 - Privacy notice and terms, a 90-day retention schedule run nightly, and server-side deletion from "Delete all my data".
 - Consent screen and 18+ check before any photo. Camera capture with a countdown, or upload.
 - API with HMAC install tokens, 3 free renders per install, a per-IP daily limit (the IP is stored only as an HMAC hash), a $5/day spend breaker per provider, and refunds when a provider fails.
-- 279 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
+- 293 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
 
 | The fitting room, before you start | A finished render, with feedback and download |
 |---|---|
@@ -204,7 +219,8 @@ docs/                Privacy notice and terms, CORS results, provider research, 
 - Long kurtas: in October a knee-length, long-sleeve kurta came back with short, puffed sleeves through the Hugging Face Space. On the Mac, Khaadi's long-sleeve kurta kept its sleeves and embroidery, but as a "Top" it ends at mid-thigh. Picked as "Dress or full outfit", the model wears the whole suit, trousers included, which suits 2- and 3-piece sets.
 - FASHN VTON 1.5 is Apache-2.0, but its human parser uses NVIDIA's non-commercial SegFormer licence, so the self-hosted provider is for personal and non-commercial use until the parser is swapped.
 - Sign-in is built and tested, but it needs a Google OAuth client id (free) to switch on.
-- The API isn't deployed, and the hosted demo is the October build. The Chrome Web Store zip is ready but not submitted.
+- The API isn't deployed, so the hosted demo answers AI photos in the page. The Chrome Web Store zip is ready but not submitted.
+- The garment trails the body a little when you move fast: body tracking smooths its points, and in a worker it is a frame or two behind the camera.
 - With the MediaPipe models the extension is about 37 MB.
 - Images inside cross-origin iframes aren't detected, and the screenshot fallback only works while the image is on screen.
 
