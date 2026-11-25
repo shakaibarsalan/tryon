@@ -9,6 +9,9 @@ import { parseDropUrl } from "./lib/drop";
 import { friendlyError } from "./lib/errors";
 import { blobToJpeg, makeThumb } from "./lib/image";
 import { prepareUploadedPhoto, storePersonPhoto } from "./lib/photo";
+import { loadMirrorEngine, mirrorCategory } from "./lib/mirror/loader";
+import { isLongTop } from "./lib/mirror/math";
+import type { MirrorSession } from "./lib/mirror/types";
 import { progressLabel } from "./lib/progress";
 import { hostMode, readWidgetGarment, type HostMode, type WidgetEvent, type WidgetGarment } from "./lib/host";
 import {
@@ -65,6 +68,7 @@ function showScreen(screen: Screen): void {
   ui.screen = screen;
   for (const s of ["consent", "photo", "room"] as Screen[]) $(`screen-${s}`).hidden = s !== screen;
   if (screen !== "photo") stopCamera();
+  if (screen !== "room") closeMirror();
   if (screen === "photo") renderPhoto();
   if (screen === "room") renderRoom();
   renderAccount();
@@ -347,6 +351,7 @@ function onGarmentChanged(next: GarmentState | undefined): void {
     $<HTMLSelectElement>("garment-category").value = categoryFor(next);
   }
   renderGarment();
+  if (mirror && next?.status !== "loading") void syncMirrorGarment();
 }
 
 async function setGarmentFromBlob(blob: Blob, source: "upload" | "drop", name?: string): Promise<void> {
@@ -433,6 +438,106 @@ function wireGarment(): void {
       })
       .catch((e) => toast(`Permission request failed: ${errorText(e)}`));
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Live mirror: the camera with the garment drawn on you in real time, on this device (MediaPipe pose
+// tracking + a cut-out of the product photo). "Make it real" turns the current frame into your photo
+// and starts an AI try-on from it.
+
+let mirror: MirrorSession | undefined;
+let mirrorStarting = false;
+
+function closeMirror(): void {
+  mirror?.stop();
+  mirror = undefined;
+  $("mirror").hidden = true;
+  $("mirror-btn").hidden = false;
+}
+
+async function syncMirrorGarment(): Promise<void> {
+  if (!mirror) return;
+  const g = ui.garment;
+  if (!g || g.status !== "ready" || !g.dataUrl) {
+    await mirror.setGarment(null);
+    return;
+  }
+  try {
+    await mirror.setGarment({ dataUrl: g.dataUrl, category: mirrorCategory(selectedCategory(), g.categoryGuess), long: isLongTop(g.title) });
+  } catch (e) {
+    setText("mirror-status", `This garment can't be shown live: ${errorText(e)}`);
+  }
+}
+
+async function openMirror(): Promise<void> {
+  if (mirror || mirrorStarting) return;
+  mirrorStarting = true;
+  stopCamera();
+  $("mirror").hidden = false;
+  $("mirror-btn").hidden = true;
+  setText("mirror-status", "Starting the camera…");
+  try {
+    // The side panel can't show Chrome's camera prompt. Until the camera is allowed, the mirror
+    // opens in a tab, which can ask; after that it works here too (same extension origin).
+    if (HOST === "extension" && (await cameraPermissionState()) !== "granted") {
+      const tab = await activeTab();
+      openTab(extensionUrl("mirror.html"), tab?.id);
+      closeMirror();
+      toast("The live mirror opened in a tab so Chrome can ask for the camera once. After that it also works here.", 8000);
+      return;
+    }
+    const stream = await openCameraStream();
+    const engine = await loadMirrorEngine(extensionUrl("/mirror-engine.js"));
+    const session = await engine.start({
+      canvas: $<HTMLCanvasElement>("mirror-canvas"),
+      stream,
+      assetBase: extensionUrl("/mediapipe").replace(/\/+$/, ""),
+    });
+    if ($("mirror").hidden) {
+      session.stop(); // closed while it was starting
+      return;
+    }
+    mirror = session;
+    session.onStatus((s) => setText("mirror-status", s.message));
+    await syncMirrorGarment();
+  } catch (e) {
+    const kind = cameraErrorKind(e);
+    setText("mirror-status", kind === "other" ? `The live mirror couldn't start: ${errorText(e)}` : cameraErrorText(kind));
+    mirror?.stop();
+    mirror = undefined;
+  } finally {
+    mirrorStarting = false;
+  }
+}
+
+async function makeItReal(): Promise<void> {
+  if (!mirror || ui.rendering) return;
+  const btn = $<HTMLButtonElement>("mirror-real");
+  btn.disabled = true;
+  try {
+    const shot = await mirror.snapshot();
+    const photo: PersonPhoto = { dataUrl: shot.dataUrl, width: shot.width, height: shot.height, source: "camera", createdAt: Date.now() };
+    await storePersonPhoto(photo);
+    ui.photo = photo;
+    renderPhoto();
+    closeMirror(); // frees the camera and the GPU for the render
+    await tryOn();
+  } catch (e) {
+    toast(`Couldn't take the photo: ${errorText(e)}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function wireMirror(): void {
+  $("mirror-btn").addEventListener("click", () => void openMirror());
+  $("mirror-close").addEventListener("click", () => closeMirror());
+  $("mirror-real").addEventListener("click", () => void makeItReal());
+  $("photo-live").addEventListener("click", () => {
+    showScreen("room");
+    void openMirror();
+  });
+  $("garment-category").addEventListener("change", () => void syncMirrorGarment());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -973,7 +1078,11 @@ function wireChips(): void {
     if (ui.windowId === undefined || info.windowId === ui.windowId) void syncChips();
   });
   ext?.tabs?.onUpdated?.addListener((_id, change, tab) => {
-    if (change.status === "complete" && tab.active && (ui.windowId === undefined || tab.windowId === ui.windowId)) void syncChips();
+    if (!tab.active || (ui.windowId !== undefined && tab.windowId !== ui.windowId)) return;
+    if (change.status === "complete") void syncChips();
+    // Heavy store pages report "complete" late (trackers, videos); the content script only needs
+    // the document, so try once shortly after a new page starts loading too. Injection is idempotent.
+    else if (change.url) setTimeout(() => void syncChips(), 2500);
   });
 }
 
@@ -1021,6 +1130,7 @@ async function deleteServerData(): Promise<boolean> {
 
 async function deleteEverything(): Promise<void> {
   stopCamera();
+  closeMirror();
   const serverDone = await deleteServerData();
   await setChipsOnTab(await activeTab(), false).catch(() => undefined);
   await clearAll().catch((e) => console.warn("[try-on] IndexedDB clear failed", e));
@@ -1115,6 +1225,7 @@ async function boot(): Promise<void> {
   wireRuntime();
   wireEmbed();
   wireAccount();
+  wireMirror();
   ui.windowId = await currentWindowId();
   void sendRuntime({ type: "PANEL_STATE", open: true } satisfies AnyMessage);
   await loadAccount();

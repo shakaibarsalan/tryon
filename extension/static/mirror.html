@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>%BRAND_NAME% · Live mirror</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/mirror.css">
+  <script src="mirror.js" defer></script>
+</head>
+<body>
+<main class="mirror-page">
+  <header class="brand-row">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--brand)"/><path d="M16 8.6a2.6 2.6 0 1 1 2.6 2.6c-.9 0-1.6.6-1.6 1.5v.8l7.6 5.4c1 .7.5 2.3-.7 2.3H8.1c-1.2 0-1.7-1.6-.7-2.3L15 13.5" fill="none" stroke="var(--on-brand)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M24.5 5.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z" fill="var(--gold)"/></svg>
+    <span>%BRAND_NAME%</span>
+  </header>
+
+  <div class="mirror-layout">
+    <div class="stage">
+      <canvas id="mirror-canvas" aria-label="Your camera, with the garment drawn on you"></canvas>
+      <p id="mirror-status" class="status" role="status">Starting the camera…</p>
+    </div>
+
+    <aside class="side card">
+      <h1>Live mirror</h1>
+      <p class="lead">Stand back so your shoulders and hips are in view, and the garment follows you as you move.</p>
+      <div class="garment">
+        <img id="garment-thumb" alt="" hidden>
+        <p id="garment-name">No garment yet. Use a Try on button on any store page and it shows up here.</p>
+      </div>
+      <label class="field">
+        <span>Type</span>
+        <select id="mirror-category">
+          <option value="auto">Auto-detect</option>
+          <option value="tops">Top</option>
+          <option value="bottoms">Bottom</option>
+          <option value="one-pieces">Dress or full outfit</option>
+        </select>
+      </label>
+      <button type="button" id="mirror-photo" class="btn primary">Use this frame as my photo</button>
+      <p id="mirror-note" class="notice" hidden></p>
+      <button type="button" id="mirror-close" class="btn ghost">Close</button>
+      <p class="fine">This runs on your computer. The camera isn't recorded or sent anywhere. The mirror is a quick preview; for a realistic picture, press "Try it on" in the fitting room.</p>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

@@ -178,3 +178,18 @@ html, body { min-height: 100%; }
 .signin-only #screen-room { display: block !important; }
 .signin-only #screen-room > :not(#account-box) { display: none !important; }
 .signin-only #account-box { margin: 24px auto; max-width: 420px; }
+
+/* Live mirror */
+.mirror-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px; }
+.mirror-btn svg { width: 18px; height: 18px; }
+.mirror { display: grid; gap: 8px; padding: 10px; margin-bottom: 10px; }
+.mirror-stage { position: relative; border-radius: var(--radius-sm); overflow: hidden; background: #111; aspect-ratio: 3 / 4; }
+.mirror-stage canvas { display: block; width: 100%; height: 100%; object-fit: cover; }
+.mirror-status {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0; padding: 6px 10px;
+  border-radius: 8px; background: rgba(20, 8, 28, 0.66); color: #fbf7f0; font-size: 12.5px; text-align: center;
+}
+.mirror-status:empty { display: none; }
+.mirror .fine { margin: 0; }
+.mirror-actions { display: flex; gap: 8px; }
+.mirror-actions .btn { flex: 1 1 auto; }

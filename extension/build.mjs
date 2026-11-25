@@ -11,6 +11,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildManifest, ICON_SIZES } from "./scripts/manifest.mjs";
+import { modelsReady, MODELS, VENDOR_DIR } from "./scripts/fetch-models.mjs";
 import { legalPage } from "./scripts/legal.mjs";
 import { iconPng } from "./scripts/png.mjs";
 
@@ -43,6 +44,9 @@ const common = {
 
 const entries = [
   { in: "src/background.ts", out: "background.js", format: "esm" },
+  // The live mirror's engine (MediaPipe pose + garment cutout), loaded only when the mirror opens.
+  { in: "src/mirror/engine.ts", out: "mirror-engine.js", format: "iife" },
+  { in: "src/mirror.ts", out: "mirror.js", format: "iife" },
   { in: "src/content.ts", out: "content.js", format: "iife" },
   { in: "src/sidepanel.ts", out: "sidepanel.js", format: "iife" },
   { in: "src/camera.ts", out: "camera.js", format: "iife" },
@@ -107,6 +111,22 @@ function writeIcons() {
   for (const size of ICON_SIZES) writeFileSync(join(dist, "icons", `icon-${size}.png`), iconPng(size, brand.colors));
 }
 
+/**
+ * MediaPipe for the live mirror: the WASM runtime from @mediapipe/tasks-vision and the two models
+ * from vendor/ (npm run fetch-models). Everything is bundled; nothing is fetched at run time.
+ */
+function writeMirrorAssets() {
+  const out = join(dist, "mediapipe");
+  mkdirSync(out, { recursive: true });
+  const wasm = join(root, "..", "node_modules", "@mediapipe", "tasks-vision", "wasm");
+  for (const f of ["vision_wasm_internal.js", "vision_wasm_internal.wasm"]) cpSync(join(wasm, f), join(out, f));
+  if (!modelsReady()) {
+    console.warn("\nLive mirror models are missing: run `npm run fetch-models -w extension`, then build again.\n");
+    return;
+  }
+  for (const m of MODELS) cpSync(join(VENDOR_DIR, m.file), join(out, m.file));
+}
+
 /** Privacy notice and terms, built from docs/legal/*.md (one copy of each text). */
 function writeLegalPages() {
   const docs = join(root, "..", "docs", "legal");
@@ -147,6 +167,7 @@ function writeAssets() {
   copyStatic();
   writeIcons();
   writeLegalPages();
+  writeMirrorAssets();
   writeManifest();
   if (!release) {
     writeWebPages();

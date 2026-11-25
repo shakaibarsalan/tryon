@@ -3,7 +3,11 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "dependencies": { "@tryon/shared": "0.1.0", "@tryon/detector": "0.1.0" },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.2.3",
+    "@tryon/detector": "0.1.0",
+    "@tryon/shared": "0.1.0"
+  },
   "scripts": {
     "build": "node build.mjs",
     "build:release": "node build.mjs --release",
@@ -11,6 +15,7 @@
     "serve": "node scripts/serve.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
-    "package": "node build.mjs --release && node scripts/package.mjs"
+    "package": "node build.mjs --release && node scripts/package.mjs",
+    "fetch-models": "node scripts/fetch-models.mjs"
   }
 }
