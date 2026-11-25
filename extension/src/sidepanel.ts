@@ -9,7 +9,7 @@ import { parseDropUrl } from "./lib/drop";
 import { friendlyError } from "./lib/errors";
 import { blobToJpeg, makeThumb } from "./lib/image";
 import { prepareUploadedPhoto, storePersonPhoto } from "./lib/photo";
-import { loadMirrorEngine, mirrorCategory } from "./lib/mirror/loader";
+import { loadMirrorEngine, mirrorCategory, speedBadge } from "./lib/mirror/loader";
 import { isLongTop } from "./lib/mirror/math";
 import type { MirrorSession } from "./lib/mirror/types";
 import { progressLabel } from "./lib/progress";
@@ -503,8 +503,8 @@ async function openMirror(): Promise<void> {
     mirror = session;
     session.onStatus((s) => {
       setText("mirror-status", s.message);
-      // Frame rate and quality step, in development builds only.
-      setText("mirror-fps", IS_DEV && s.fps !== undefined ? `${s.fps} fps${s.quality ? ` · step ${s.quality}` : ""}` : undefined);
+      // Frame rate, tracking rate and speed step, in development builds only.
+      setText("mirror-fps", IS_DEV ? speedBadge(s) : undefined);
     });
     await syncMirrorGarment();
   } catch (e) {

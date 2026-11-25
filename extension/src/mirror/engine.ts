@@ -1,13 +1,16 @@
-// Live mirror engine, all on the device. Each camera frame:
+// Live mirror engine, all on the device. For each camera frame:
 //   * MediaPipe's pose landmarker finds shoulders, elbows, wrists, hips, knees and ankles;
 //   * MediaPipe's segmenter labels skin, hair, clothes and background;
+//   * both run in Web Workers (mirror-worker.js, see lib/mirror/lanes.ts) where the browser allows,
+//     so the picture keeps the camera's frame rate on a slow device and the garment updates as often
+//     as the models manage there;
 //   * the garment, cut out of its product photo once, is a mesh skinned to those joints (see
 //     lib/mirror/skin.ts), so sleeves follow the arms and a skirt follows the legs;
 //   * the WebGL renderer (gl.ts) takes the person's own clothes off where the new garment doesn't
 //     cover them, draws the garment with the camera's light and folds, and keeps hands in front.
 // It is still a preview made from the product photo, not an AI render: "Make it real" in the UI
 // sends a still frame to the render service for that. Built as its own bundle (mirror-engine.js).
-import { FilesetResolver, ImageSegmenter, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
+import { FilesetResolver, ImageSegmenter, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { LIMITS } from "@tryon/shared";
 import { encodeJpeg } from "../lib/image";
 import { planPortraitCrop, type CropPlan } from "../lib/image-math";
@@ -26,6 +29,8 @@ import {
   type MirrorCategory,
   type Pt,
 } from "../lib/mirror/math";
+import { InlineLane, WorkerLane, readMask, readPose, startWorker, type Lane, type Landmark, type MaskAnswer, type WorkerLike } from "../lib/mirror/lanes";
+import { POSE_MODEL, POSE_SETTINGS, SEGMENT_MODEL } from "../lib/mirror/models";
 import { QualityGovernor } from "../lib/mirror/quality";
 import { buildMesh, deformMesh, type GarmentMesh } from "../lib/mirror/skin";
 import { ENGINE_GLOBAL, type MirrorEngine, type MirrorGarment, type MirrorSession, type MirrorStatus, type PreparedGarmentInfo } from "../lib/mirror/types";
@@ -44,47 +49,130 @@ const CLOTHES = 4;
  */
 const INFLATE = { "on-model": { x: 1.06, y: 1.03 }, "flat-lay": { x: 1.2, y: 1.05 } } as const;
 
-interface Models {
-  video: PoseLandmarker;
+/** Camera frames go to the workers at most this size on the long side (the models work at 256). */
+const GRAB_SIDE = 640;
+/** A body mask older than this no longer matches a moving body, so the old clothes stay on. */
+const MASK_MAX_AGE_MS = 600;
+
+/** Models for garment photos: used once per garment, on this thread. */
+interface PhotoModels {
   image: PoseLandmarker;
   segmenter: ImageSegmenter;
+}
+
+/** The camera models on this thread, only when they can't run in workers. */
+interface VideoModels {
+  video: PoseLandmarker;
   liveSegmenter: ImageSegmenter;
 }
 
-let models: Promise<Models> | undefined;
-
-async function create(base: string, delegate: "GPU" | "CPU"): Promise<Models> {
-  const vision = await FilesetResolver.forVisionTasks(base);
-  const pose = (mode: "VIDEO" | "IMAGE") =>
-    PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: `${base}/pose_landmarker_lite.task`, delegate },
-      runningMode: mode,
-      numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-  const segmenter = (mode: "VIDEO" | "IMAGE") =>
-    ImageSegmenter.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: `${base}/selfie_multiclass_256x256.tflite`, delegate },
-      runningMode: mode,
-      outputCategoryMask: mode === "VIDEO",
-      outputConfidenceMasks: mode === "IMAGE",
-    });
-  const [video, image, seg, liveSeg] = await Promise.all([pose("VIDEO"), pose("IMAGE"), segmenter("IMAGE"), segmenter("VIDEO")]);
-  return { video, image, segmenter: seg, liveSegmenter: liveSeg };
+interface Lanes {
+  pose: Lane<Landmark[]>;
+  segment: Lane<MaskAnswer>;
 }
 
-function loadModels(base: string): Promise<Models> {
-  models ??= create(base, "GPU").catch((e) => {
-    console.warn("[try-on] MediaPipe GPU delegate failed, using the CPU:", e);
-    return create(base, "CPU");
+type Delegate = "GPU" | "CPU";
+const pose = (vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, base: string, mode: "VIDEO" | "IMAGE", delegate: Delegate) =>
+  PoseLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: `${base}/${POSE_MODEL}`, delegate }, runningMode: mode, ...POSE_SETTINGS });
+const segmenter = (vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, base: string, mode: "VIDEO" | "IMAGE", delegate: Delegate) =>
+  ImageSegmenter.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: `${base}/${SEGMENT_MODEL}`, delegate },
+    runningMode: mode,
+    outputCategoryMask: mode === "VIDEO",
+    outputConfidenceMasks: mode === "IMAGE",
   });
-  models.catch(() => (models = undefined));
-  return models;
+
+/** Builds models on the GPU, or on the CPU when the GPU can't (old drivers, blocklisted GPUs). */
+function onGpuOrCpu<T>(base: string, make: (vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, d: Delegate) => Promise<T>): Promise<T> {
+  return FilesetResolver.forVisionTasks(base).then((vision) =>
+    make(vision, "GPU").catch((e) => {
+      console.warn("[try-on] MediaPipe GPU delegate failed, using the CPU:", e);
+      return make(vision, "CPU");
+    }),
+  );
 }
 
-function anchorsFrom(lm: NormalizedLandmark[] | undefined, map: (p: NormalizedLandmark) => Pt): Anchors {
+function once<T>(load: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | undefined;
+  return () => {
+    p ??= load();
+    p.catch(() => (p = undefined));
+    return p;
+  };
+}
+
+let assetBase = "";
+const photoModels = once<PhotoModels>(() =>
+  onGpuOrCpu(assetBase, async (v, d) => {
+    const [image, seg] = await Promise.all([pose(v, assetBase, "IMAGE", d), segmenter(v, assetBase, "IMAGE", d)]);
+    return { image, segmenter: seg };
+  }),
+);
+const videoModels = once<VideoModels>(() =>
+  onGpuOrCpu(assetBase, async (v, d) => {
+    const [video, liveSegmenter] = await Promise.all([pose(v, assetBase, "VIDEO", d), segmenter(v, assetBase, "VIDEO", d)]);
+    return { video, liveSegmenter };
+  }),
+);
+
+/** mirror-worker.js sits next to this bundle. */
+const WORKER_URL = (() => {
+  const src = typeof document !== "undefined" ? (document.currentScript as HTMLScriptElement | null)?.src : undefined;
+  return src ? new URL("mirror-worker.js", src).href : undefined;
+})();
+
+/** The two camera workers, or null where they can't run (the models then run on the page). Kept between sessions. */
+const cameraWorkers = once<{ pose: WorkerLike; segment: WorkerLike; delegate: string } | null>(async () => {
+  if (!WORKER_URL || typeof Worker === "undefined" || typeof createImageBitmap !== "function") return null;
+  const make = () => new Worker(WORKER_URL) as unknown as WorkerLike;
+  // Chrome runs every WebGL context, workers' included, through one GPU queue, so pose on the GPU waits
+  // behind each segmentation (55-90 ms on an M1 Pro) and ends up several times slower than alone. On
+  // the CPU (17 ms there) it doesn't queue at all. The segmenter is the one that needs the GPU: on the
+  // CPU it takes over 200 ms.
+  const started = await Promise.allSettled([
+    startWorker(make, "pose", assetBase, ["CPU", "GPU"]),
+    startWorker(make, "segment", assetBase, ["GPU", "CPU"]),
+  ]);
+  const [p, sg] = started;
+  if (p.status === "fulfilled" && sg.status === "fulfilled") {
+    const delegate = p.value.delegate === sg.value.delegate ? p.value.delegate : `${p.value.delegate}+${sg.value.delegate}`;
+    return { pose: p.value.worker, segment: sg.value.worker, delegate };
+  }
+  for (const r of started) if (r.status === "fulfilled") r.value.worker.terminate();
+  const why = started.find((r): r is PromiseRejectedResult => r.status === "rejected")?.reason;
+  console.warn("[try-on] the mirror's models can't run in workers here, so they run on the page:", why);
+  return null;
+});
+
+/** The camera frame for a worker, scaled down to GRAB_SIDE. */
+function grabFrame(video: HTMLVideoElement): Promise<ImageBitmap> {
+  const scale = Math.min(1, GRAB_SIDE / Math.max(video.videoWidth, video.videoHeight));
+  if (scale >= 1) return createImageBitmap(video);
+  const size = { resizeWidth: Math.round(video.videoWidth * scale), resizeHeight: Math.round(video.videoHeight * scale) };
+  return createImageBitmap(video, { ...size, resizeQuality: "medium" }).catch(() => createImageBitmap(video));
+}
+
+async function startLanes(video: HTMLVideoElement): Promise<Lanes & { where: string }> {
+  const workers = await cameraWorkers();
+  if (workers) {
+    const grab = () => grabFrame(video);
+    return { pose: new WorkerLane(workers.pose, grab, readPose), segment: new WorkerLane(workers.segment, grab, readMask), where: `workers, ${workers.delegate}` };
+  }
+  const m = await videoModels();
+  return {
+    pose: new InlineLane((ts) => m.video.detectForVideo(video, ts).landmarks[0] ?? []),
+    segment: new InlineLane((ts) => {
+      const r = m.liveSegmenter.segmentForVideo(video, ts);
+      const cm = r.categoryMask;
+      const answer = cm ? { mask: cm.getAsUint8Array().slice(), width: cm.width, height: cm.height } : undefined;
+      r.close();
+      return answer;
+    }),
+    where: "page",
+  };
+}
+
+function anchorsFrom(lm: Landmark[] | undefined, map: (p: Landmark) => Pt): Anchors {
   const out: Anchors = {};
   if (!lm) return out;
   for (const [key, index] of Object.entries(LANDMARK) as [AnchorKey, number][]) {
@@ -120,7 +208,7 @@ function midpoint(...pts: (Pt | undefined)[]): Pt | null {
 }
 
 /** Cuts the garment out of its product photo, finds its body points and builds the skinned mesh. */
-async function prepareGarment(g: MirrorGarment, m: Models): Promise<PreparedGarment> {
+async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<PreparedGarment> {
   const img = await loadImage(g.dataUrl);
   const scale = Math.min(1, WORK_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.max(1, Math.round(img.naturalWidth * scale));
@@ -298,11 +386,23 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   const mirrored = o.mirrored ?? true;
   // Developer view of the live body mask: add #mirror-debug to the page address.
   const debug = /mirror-debug/.test(location.hash);
+  // Developer timings: add #mirror-profile to the page address. Each second globalThis.__mirrorProfile
+  // gets the average milliseconds per stage, a number in globalThis.__mirrorLevel pins the speed step,
+  // and globalThis.__mirrorSync = true also waits for the GPU after each frame (slows the mirror down).
+  const profile = /mirror-profile/.test(location.hash);
+  const dev = globalThis as unknown as { __mirrorProfile?: Record<string, number>; __mirrorLevel?: number; __mirrorSync?: boolean };
+  const spent: Record<string, number> = {};
+  const lap = (stage: string, since: number): number => {
+    const t = performance.now();
+    spent[stage] = (spent[stage] ?? 0) + t - since;
+    return t;
+  };
   const listeners = new Set<(s: MirrorStatus) => void>();
   let status: MirrorStatus = { state: "loading", message: "Starting the camera…" };
   const emit = (s: MirrorStatus) => {
-    const next = { ...s, fps: s.fps ?? status.fps, quality: s.quality ?? status.quality };
-    if (next.state === status.state && next.message === status.message && next.fps === status.fps && next.quality === status.quality) return;
+    const next = { ...s, fps: s.fps ?? status.fps, bodyFps: s.bodyFps ?? status.bodyFps, quality: s.quality ?? status.quality };
+    const same = next.state === status.state && next.message === status.message && next.fps === status.fps;
+    if (same && next.bodyFps === status.bodyFps && next.quality === status.quality) return;
     status = next;
     for (const l of listeners) l(next);
   };
@@ -314,9 +414,25 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   await video.play();
   if (!video.videoWidth) await new Promise((r) => video.addEventListener("loadedmetadata", r, { once: true }));
 
-  emit({ state: "loading", message: "Loading the body tracker…" });
-  const m = await loadModels(o.assetBase);
+  // The camera shows straight away and the body tracker loads behind it: on a first visit to the web
+  // version that's about 24 MB to download.
   const renderer = new MirrorRenderer(o.canvas);
+  assetBase = o.assetBase;
+  emit({ state: "loading", message: "Loading the body tracker…" });
+  const photoReady = photoModels();
+  photoReady.catch(() => {});
+  let lanes: Lanes | null = null;
+  let broken = false;
+  startLanes(video).then(
+    (l) => {
+      lanes = l;
+      console.info(`[try-on] live mirror models: ${l.where}`);
+    },
+    (e) => {
+      broken = true;
+      emit({ state: "error", message: `The body tracker couldn't start: ${e instanceof Error ? e.message : String(e)}` });
+    },
+  );
 
   let crop: CropPlan = planPortraitCrop(video.videoWidth, video.videoHeight, 3 / 4);
   let videoW = 0;
@@ -398,55 +514,83 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   const smoother = new AnchorSmoother(0.55);
   let garment: PreparedGarment | null = null;
   let garmentToken = 0;
+  let preparing = false;
   let stopped = false;
   let lastSeen = 0;
   let frames = 0;
   let fpsFrames = 0;
   let fpsSince = performance.now();
   let lastVideoTime = -1;
+  let lastFrameAt = 0;
   let target: Anchors = {};
+  let poseAt = -1;
   let mask: Uint8Array | null = null;
+  let maskAt = -1;
   let maskW = 0;
   let maskH = 0;
   let positions: Float32Array<ArrayBuffer> | null = null;
-  // Cheaper steps when frames come too slowly (older laptops, phones): see lib/mirror/quality.ts.
+  // Cheaper steps when tracking falls behind the camera (older laptops, phones): see lib/mirror/quality.ts.
   const governor = new QualityGovernor();
+  // One pass per camera frame. requestAnimationFrame runs at the screen's rate (120 Hz on some
+  // laptops), and a live video's currentTime moves on every time, so the fallback paces itself by the
+  // camera's own frame rate instead.
+  const rvfc = typeof video.requestVideoFrameCallback === "function";
+  const cameraRate = o.stream.getVideoTracks()[0]?.getSettings().frameRate ?? 30;
+  let presented = 0;
+  let presentedSince = 0;
+  const schedule = () => {
+    if (stopped) return;
+    if (rvfc) {
+      video.requestVideoFrameCallback((_, meta) => {
+        presented = meta.presentedFrames;
+        frame();
+      });
+    } else requestAnimationFrame(frame);
+  };
 
   const frame = () => {
     if (stopped) return;
     const now = performance.now();
     if (video.videoWidth && (video.videoWidth !== videoW || video.videoHeight !== videoH)) fit();
-    if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    if (profile && typeof dev.__mirrorLevel === "number") governor.level = dev.__mirrorLevel;
+    const fresh = rvfc ? true : video.currentTime !== lastVideoTime && now - lastFrameAt >= 800 / cameraRate;
+    if (video.readyState >= 2 && fresh) {
       lastVideoTime = video.currentTime;
-      try {
-        const lm = m.video.detectForVideo(video, now).landmarks[0];
-        const raw = anchorsFrom(lm, (p) => toCanvas(p, { width: videoW, height: videoH }, crop, false));
-        target = smoother.next(raw);
-        if (raw.ls || raw.lh) lastSeen = now;
-        const every = governor.current.segmentEvery;
-        if (every === 0) {
-          mask = null;
-        } else if (frames % every === 0) {
-          const seg = m.liveSegmenter.segmentForVideo(video, now);
-          const cm = seg.categoryMask;
-          mask = cm ? cm.getAsUint8Array().slice() : null;
-          maskW = cm?.width ?? 0;
-          maskH = cm?.height ?? 0;
-          seg.close();
+      lastFrameAt = now;
+      let t = now;
+      const level = governor.current;
+      if (lanes) {
+        lanes.pose.submit(now);
+        if (level.segmentEvery > 0 && frames % level.segmentEvery === 0) lanes.segment.submit(now);
+        if (profile) t = lap("models", t);
+        if (lanes.pose.at !== poseAt) {
+          poseAt = lanes.pose.at;
+          const raw = anchorsFrom(lanes.pose.latest ?? undefined, (p) => toCanvas(p, { width: videoW, height: videoH }, crop, false));
+          target = smoother.next(raw);
+          if (raw.ls || raw.lh) lastSeen = now;
         }
-        if (frames % 12 === 0) sample(mask);
-      } catch (e) {
-        console.debug("[try-on] mirror frame skipped", e);
+        const m = lanes.segment.latest;
+        if (level.segmentEvery === 0) mask = null;
+        else if (m && lanes.segment.at !== maskAt) {
+          maskAt = lanes.segment.at;
+          mask = m.mask;
+          maskW = m.width;
+          maskH = m.height;
+        }
       }
+      const liveMask = mask && now - maskAt < MASK_MAX_AGE_MS ? mask : null;
+      if (frames % 12 === 0) sample(liveMask);
+      if (profile) t = lap("sample", t);
       frames++;
       fpsFrames++;
       const seen = now - lastSeen < 700;
       positions = garment && seen ? deformMesh(garment.mesh, garment.anchors, target, garment.category, positions ?? undefined) : null;
       const shapes = bodyShapes(target, garment?.category ?? null);
+      if (profile) t = lap("mesh", t);
       renderer.render({
         video,
         crop,
-        mask,
+        mask: liveMask,
         maskWidth: maskW,
         maskHeight: maskH,
         debug,
@@ -459,38 +603,77 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         sceneLum,
         fill,
         mirrored,
-        takeOff: governor.current.takeOff,
+        takeOff: level.takeOff && liveMask !== null,
       });
-      if (!garment) emit({ state: "tracking", message: "Pick a garment to see it on you." });
-      else if (seen && positions) emit({ state: "tracking", message: "Move around: the garment follows you." });
-      else emit({ state: "looking", message: "Step back until your shoulders and hips are in view." });
+      if (profile) {
+        t = lap("draw", t);
+        if (dev.__mirrorSync) {
+          renderer.finish(); // waits for the GPU, so its time shows here and not in the next stage
+          t = lap("gpu", t);
+        }
+        lap("frame", now);
+      }
+      // Until the tracker is ready (or if it failed) the status already says so.
+      if (lanes && !broken) {
+        if (garment) {
+          if (seen && positions) emit({ state: "tracking", message: "Move around: the garment follows you." });
+          else emit({ state: "looking", message: "Step back until your shoulders and hips are in view." });
+        } else if (!preparing) emit({ state: "tracking", message: "Pick a garment to see it on you." });
+      }
     }
     if (now - fpsSince >= 1000) {
-      const fps = Math.round((fpsFrames * 1000) / (now - fpsSince));
-      const quality = governor.update(fps);
-      emit({ ...status, fps, quality });
+      const secs = (now - fpsSince) / 1000;
+      const fps = Math.round(fpsFrames / secs);
+      // Frames the camera delivered (the fallback loop can only go by what the camera promised).
+      const camera = rvfc ? Math.round((presented - presentedSince) / secs) : Math.round(cameraRate);
+      presentedSince = presented;
+      const body = lanes?.pose.stats();
+      const masks = lanes?.segment.stats();
+      const bodyFps = body ? Math.round(body.answers / secs) : undefined;
+      const quality = body ? governor.update({ camera, drawn: fps, body: bodyFps ?? 0 }) : governor.level;
+      emit({ ...status, fps, bodyFps, quality });
+      if (profile) {
+        const per: Record<string, number> = { fps, camera, body: bodyFps ?? 0, masks: Math.round((masks?.answers ?? 0) / secs), level: governor.level };
+        per.poseMs = Math.round((body?.ms ?? 0) * 10) / 10;
+        per.segMs = Math.round((masks?.ms ?? 0) * 10) / 10;
+        for (const k of Object.keys(spent)) {
+          per[k] = Math.round((spent[k]! / Math.max(1, fpsFrames)) * 10) / 10;
+          spent[k] = 0;
+        }
+        dev.__mirrorProfile = per;
+      }
       fpsFrames = 0;
       fpsSince = now;
     }
-    requestAnimationFrame(frame);
+    schedule();
   };
-  requestAnimationFrame(frame);
+  schedule();
 
   return {
     async setGarment(g) {
       const token = ++garmentToken;
       if (!g) {
         garment = null;
+        preparing = false;
         renderer.setGarment(null, null);
         return null;
       }
-      emit({ state: "loading", message: "Cutting the garment out of its photo…" });
-      const prepared = await prepareGarment(g, m);
-      if (token !== garmentToken) return prepared.info; // another garment arrived meanwhile
-      garment = prepared;
-      positions = null;
-      renderer.setGarment(prepared.canvas, prepared.mesh);
-      return prepared.info;
+      // From here until the garment is on, the status says what's happening, not "Pick a garment".
+      preparing = true;
+      try {
+        const models = await photoReady; // may still be loading on a first visit
+        if (token !== garmentToken) return null; // another garment arrived meanwhile
+        emit({ state: "loading", message: "Cutting the garment out of its photo…" });
+        const prepared = await prepareGarment(g, models);
+        if (token !== garmentToken) return prepared.info;
+        garment = prepared;
+        positions = null;
+        renderer.setGarment(prepared.canvas, prepared.mesh);
+        if (!lanes && !broken) emit({ state: "loading", message: "Loading the body tracker…" });
+        return prepared.info;
+      } finally {
+        if (token === garmentToken) preparing = false;
+      }
     },
     async snapshot() {
       const enc = await encodeJpeg(video, LIMITS.personMaxSide, crop, { quality: 0.9 });

@@ -3,7 +3,7 @@
 // garment picked on any store page through storage.session, like the side panel does.
 import { BRAND, IS_DEV } from "./lib/config";
 import { cameraErrorKind, cameraErrorText, cameraPermissionState, openCameraStream } from "./lib/camera-capture";
-import { loadMirrorEngine, mirrorCategory } from "./lib/mirror/loader";
+import { loadMirrorEngine, mirrorCategory, speedBadge } from "./lib/mirror/loader";
 import { isLongTop } from "./lib/mirror/math";
 import type { MirrorSession } from "./lib/mirror/types";
 import { storePersonPhoto } from "./lib/photo";
@@ -100,8 +100,9 @@ async function main(): Promise<void> {
   session.onStatus((s) => {
     status(s.message);
     const fps = $("mirror-fps");
-    fps.hidden = !IS_DEV || s.fps === undefined;
-    fps.textContent = s.fps !== undefined ? `${s.fps} fps${s.quality ? ` · step ${s.quality}` : ""}` : "";
+    const badge = IS_DEV ? speedBadge(s) : undefined;
+    fps.hidden = !badge;
+    fps.textContent = badge ?? "";
   });
   onItemChange("session", KEYS.garment, (v) => void applyGarment(v as GarmentState | undefined));
   await applyGarment(await getItem<GarmentState>("session", KEYS.garment));

@@ -46,6 +46,8 @@ const entries = [
   { in: "src/background.ts", out: "background.js", format: "esm" },
   // The live mirror's engine (MediaPipe pose + garment cutout), loaded only when the mirror opens.
   { in: "src/mirror/engine.ts", out: "mirror-engine.js", format: "iife" },
+  // Its camera models, run off the page's thread (one worker for pose, one for the body segmenter).
+  { in: "src/mirror/worker.ts", out: "mirror-worker.js", format: "iife" },
   { in: "src/mirror.ts", out: "mirror.js", format: "iife" },
   { in: "src/content.ts", out: "content.js", format: "iife" },
   { in: "src/sidepanel.ts", out: "sidepanel.js", format: "iife" },

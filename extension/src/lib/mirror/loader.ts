@@ -2,7 +2,7 @@
 // opens the camera, and works out which body points a garment is pinned by.
 import type { CategoryGuess } from "@tryon/shared";
 import type { MirrorCategory } from "./math";
-import { ENGINE_GLOBAL, type MirrorEngine } from "./types";
+import { ENGINE_GLOBAL, type MirrorEngine, type MirrorStatus } from "./types";
 
 let loading: Promise<MirrorEngine> | undefined;
 
@@ -33,4 +33,13 @@ export function mirrorCategory(selected: string, guess: CategoryGuess | undefine
   if (selected === "tops" || selected === "bottoms" || selected === "one-pieces") return selected;
   if (guess === "tops" || guess === "bottoms" || guess === "one-pieces") return guess;
   return "tops";
+}
+
+/** The developer badge on the mirror: frames drawn, body-tracking answers per second, speed step. */
+export function speedBadge(s: MirrorStatus): string | undefined {
+  if (s.fps === undefined) return undefined;
+  const parts = [`${s.fps} fps`];
+  if (s.bodyFps !== undefined) parts.push(`body ${s.bodyFps}/s`);
+  if (s.quality) parts.push(`step ${s.quality}`);
+  return parts.join(" · ");
 }

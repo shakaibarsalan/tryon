@@ -47,7 +47,7 @@ script need a reload too (an orphaned copy removes its chips when clicked).
 | Content script | `src/content.ts` | Injected on demand. "Try on" chips in a closed Shadow DOM; answers page-context questions |
 | Side panel | `static/sidepanel.html`, `src/sidepanel.ts`, `static/css/panel.css` | Consent, your photo, fitting room, results |
 | Camera tab | `static/camera.html`, `src/camera.ts` | First camera grant in a visible tab |
-| Live mirror | `src/mirror/engine.ts`, `src/mirror/gl.ts`, `src/lib/mirror/*` | MediaPipe pose + segmentation, skinned garment mesh, WebGL compositing; loaded on demand as `mirror-engine.js` |
+| Live mirror | `src/mirror/engine.ts`, `src/mirror/gl.ts`, `src/mirror/worker.ts`, `src/lib/mirror/*` | MediaPipe pose + segmentation in two Web Workers (`lib/mirror/lanes.ts`), skinned garment mesh, WebGL compositing; loaded on demand as `mirror-engine.js` and `mirror-worker.js` |
 | Live mirror tab | `static/mirror.html`, `src/mirror.ts` | First use (Chrome asks for the camera here) and a bigger view |
 | Web try page | `try.html` (built from `static/sidepanel.html`) | The fitting room as a normal page, or inside the store script's iframe |
 | Store script | `src/widget.ts` -> `widget.js` | One `<script>` tag on a product page: "Try it on" opens `try.html?embed=1` in a modal |
@@ -102,6 +102,15 @@ garment replaces them (matched by colour, so a top leaves the jeans alone) as sk
 behind, carries small gaps over with the garment's edge, puts the camera's folds on the new fabric,
 and keeps hands in front of it. "Make it real" saves the frame as the photo and starts an AI
 try-on. Add `#mirror-debug` to the panel's address to see the body mask instead.
+
+The two models run in Web Workers (`src/mirror/worker.ts`, `lib/mirror/lanes.ts`). The page sends a
+frame whenever a worker is free and draws every camera frame with the newest answers, so a slow
+model costs freshness, not frame rate. Pose runs on the CPU and the segmenter on the GPU: Chrome puts
+every WebGL context through one GPU queue, and pose on the GPU waited behind each segmentation.
+Where workers can't run, both models run on the page. `lib/mirror/quality.ts` steps down (fewer
+masks, then no take-off, then pose only) when tracking or drawing falls behind the camera. With
+`#mirror-profile` in the address, `globalThis.__mirrorProfile` gets per-stage timings every second
+and a number in `globalThis.__mirrorLevel` pins a step.
 
 Everything runs on the device; MediaPipe's WASM and models are bundled (about 37 MB), nothing is
 fetched at run time.

@@ -279,6 +279,7 @@ export class MirrorRenderer {
   private meshVao: WebGLVertexArrayObject | null = null;
   private meshPos: WebGLBuffer | null = null;
   private meshCount = 0;
+  private readonly pixel = new Uint8Array(4);
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", { premultipliedAlpha: false, preserveDrawingBuffer: true });
@@ -365,6 +366,11 @@ export class MirrorRenderer {
     gl.bindVertexArray(null);
     this.meshVao = vao;
     this.meshCount = mesh.indices.length;
+  }
+
+  /** Blocks until the GPU has drawn the frame. Only for the developer timings (#mirror-profile). */
+  finish(): void {
+    this.gl.readPixels(0, 0, 1, 1, this.gl.RGBA, this.gl.UNSIGNED_BYTE, this.pixel);
   }
 
   render(f: FrameInput): void {
