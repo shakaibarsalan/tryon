@@ -21,6 +21,12 @@
 // garment. The first time, the mirror opens in a tab (the side panel can't show Chrome's camera
 // prompt); the script then allows the camera for the extension, as a person would, and checks the
 // mirror inside the side panel. With --mirror, "Make it real" starts the AI try-on from the live frame.
+//
+// Speed: --mirror-ms 20000 keeps the mirror running for 20 s while the script samples its frame
+// rate, body-tracking rate and speed step. --cpu-throttle 4 slows the side panel's own thread four
+// times over (what Lighthouse uses to stand in for a mid-range phone); Chrome can't slow the mirror's
+// workers this way, so it shows whether the page keeps up, not how a slow device tracks. --profile
+// <dir> runs a second Chrome with its own profile and copy of the extension, next to an open one.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +45,7 @@ const flag = (name) => args.includes(`--${name}`);
 const CHROME = process.env.CHROME_BIN || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const base = join(homedir(), ".cache", "tryon-e2e");
 const profile = opt("profile", join(base, "profile"));
-const extCopy = join(base, "extension");
+const extCopy = opt("profile") ? `${profile}-extension` : join(base, "extension");
 const storesFile = resolve(opt("stores", join(repo, "tools", "e2e-stores.json")));
 const person = resolve(opt("person", join(repo, "extension", "dev", "samples", "model.jpg")));
 const outDir = resolve(opt("out", join(repo, "eval", "out", "e2e")));
@@ -54,6 +60,7 @@ const mirrorOnly = flag("mirror-only");
 const setupOnly = flag("setup-only");
 const mirrorMode = flag("mirror") || mirrorOnly;
 const RENDER_TIMEOUT_MS = Number(opt("render-timeout", "900")) * 1000;
+const cpuThrottle = Number(opt("cpu-throttle", "1"));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -292,6 +299,11 @@ async function main() {
       "--no-default-browser-check",
       "--disable-search-engine-choice-screen",
       "--window-size=1480,940",
+      // Keep rendering when the window is behind others (Chrome otherwise pauses hidden pages, which
+      // stops the camera frames and image decoding), so a run works while the Mac is in use.
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-background-timer-throttling",
       "--lang=en-US",
       ...(camera
         ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-video-capture=${resolve(camera)}`]
@@ -340,6 +352,10 @@ async function main() {
     await cdp.send("Runtime.enable", {}, panel);
     await cdp.send("Page.enable", {}, panel).catch(() => {});
     const inPanel = (js) => evaluate(cdp, panel, js);
+    if (cpuThrottle > 1) {
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle }, panel);
+      log(`side panel CPU slowed ${cpuThrottle}x`);
+    }
     const shown = (id) => inPanel(`(() => { const e = document.getElementById(${JSON.stringify(id)}); return !!e && !e.hidden && e.offsetParent !== null; })()`);
 
     // Consent and the photo (an AI-generated model photo, never a real person's).
@@ -473,6 +489,7 @@ async function main() {
             const { sessionId: ms } = await cdp.send("Target.attachToTarget", { targetId: tab.targetId, flatten: true });
             await cdp.send("Runtime.enable", {}, ms);
             await cdp.send("Page.enable", {}, ms);
+            if (cpuThrottle > 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle }, ms);
             const t1 = Date.now();
             r.mirrorTab = await waitUntil(async () => tracking(await mirrorStatus(ms)), 90_000, "mirror tracking in its tab", 500);
             r.mirrorTabSeconds = Math.round((Date.now() - t1) / 1000);
@@ -500,7 +517,25 @@ async function main() {
             throw new Error(`${e.message}; the mirror said: ${lastStatus}`);
           });
           r.mirrorPanelSeconds = Math.round((Date.now() - t2) / 1000);
-          await sleep(Number(opt("mirror-ms", "4000")));
+          // The dev build shows "<n> fps · body <b>/s · step <k>" on the mirror: frames drawn, body-tracking
+          // answers and the speed step. Sample it while the mirror runs.
+          const fps = [];
+          const body = [];
+          let step = 0;
+          for (const end = Date.now() + Number(opt("mirror-ms", "4000")); Date.now() < end; ) {
+            await sleep(1000);
+            const m = /(\d+) fps(?: · body (\d+)\/s)?(?: · step (\d+))?/.exec(await inPanel("document.getElementById('mirror-fps')?.textContent || ''"));
+            if (m) {
+              fps.push(Number(m[1]));
+              if (m[2] !== undefined) body.push(Number(m[2]));
+              step = Number(m[3] ?? 0);
+            }
+          }
+          const median = (a) => [...a].sort((x, y) => x - y)[a.length >> 1];
+          if (fps.length) {
+            r.mirrorFps = { fps: median(fps), body: body.length ? median(body) : undefined, samples: fps, bodySamples: body, lastStep: step, cpuThrottle };
+            log(`${store.name}: mirror ${r.mirrorFps.fps} fps, body tracked ${r.mirrorFps.body ?? "?"}/s (medians), speed step ${step}${cpuThrottle > 1 ? `, CPU slowed ${cpuThrottle}x` : ""}`);
+          }
           await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 }, panel).then((s) =>
             writeFileSync(join(outDir, `${slug(store.name)}-mirror-panel.jpg`), Buffer.from(s.data, "base64")),
           );
