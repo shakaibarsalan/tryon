@@ -17,6 +17,10 @@ Your photo and your try-on results are saved in your browser, not on our server.
 
 The extension keeps these in Chrome's extension storage. The web page and the store script keep them in the storage of the Try-On site, so the store you are shopping on can't read them.
 
+## The live mirror
+
+The live mirror shows your camera with the garment drawn on you. It runs entirely on your computer: the body tracking and the drawing happen in your browser, and camera frames aren't recorded, saved or sent anywhere. "Make it real" saves the frame on screen as your photo, and from then on it's treated like any photo you take or upload.
+
 ## What we send, and when
 
 When you press "Try it on", your browser sends the Try-On API:

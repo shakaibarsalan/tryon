@@ -8,15 +8,19 @@ Vanilla TypeScript + CSS, bundled with esbuild. No UI framework, no remote code.
 From the repo root:
 
 ```bash
-npm run build -w extension            # dev build -> extension/dist (sourcemaps + dev harness)
-npm run build:release -w extension    # minified, no sourcemaps, no dist/dev
+npm run fetch-models -w extension     # MediaPipe pose + segmenter models for the live mirror (checksummed)
+npm run build -w extension            # dev build -> extension/dist (sourcemaps, dev harness, web page, store script)
+npm run build:release -w extension    # minified, no sourcemaps, no dist/dev, no web files
+npm run package -w extension          # release build zipped for the Chrome Web Store -> extension/release/
 npm run watch -w extension            # rebuild on source changes
 npm test -w extension                 # vitest unit tests
 npx tsc -p extension/tsconfig.json    # typecheck
 ```
 
 `TRYON_API` sets the Try-On API base URL at build time (default `http://localhost:8787`). Its
-origin is the only entry in `host_permissions`. Example for a deployed API:
+origin is the only entry in `host_permissions`. `TRYON_WEB` sets the web site the extension opens
+for sign-in (default `http://localhost:5178`); only that site may message the extension
+(`externally_connectable`). Example for a deployed API:
 
 ```bash
 TRYON_API=https://api.example.com npm run build:release -w extension
@@ -43,6 +47,11 @@ script need a reload too (an orphaned copy removes its chips when clicked).
 | Content script | `src/content.ts` | Injected on demand. "Try on" chips in a closed Shadow DOM; answers page-context questions |
 | Side panel | `static/sidepanel.html`, `src/sidepanel.ts`, `static/css/panel.css` | Consent, your photo, fitting room, results |
 | Camera tab | `static/camera.html`, `src/camera.ts` | First camera grant in a visible tab |
+| Live mirror | `src/mirror/engine.ts`, `src/mirror/gl.ts`, `src/lib/mirror/*` | MediaPipe pose + segmentation, skinned garment mesh, WebGL compositing; loaded on demand as `mirror-engine.js` |
+| Live mirror tab | `static/mirror.html`, `src/mirror.ts` | First use (Chrome asks for the camera here) and a bigger view |
+| Web try page | `try.html` (built from `static/sidepanel.html`) | The fitting room as a normal page, or inside the store script's iframe |
+| Store script | `src/widget.ts` -> `widget.js` | One `<script>` tag on a product page: "Try it on" opens `try.html?embed=1` in a modal |
+| Legal pages | `privacy.html`, `terms.html` | Built from `docs/legal/*.md` |
 | Shared helpers | `src/lib/*` | API client, image encoding, IndexedDB, storage, geometry, drop parsing |
 
 ### Entry points
@@ -76,6 +85,26 @@ Every source (AVIF, GIF, PNG with transparency, ...) is decoded with `createImag
 re-encoded as JPEG on a white background, longest side `LIMITS.garmentMaxSide`, under
 `LIMITS.maxImageBytes`. The current garment is kept in `chrome.storage.session`, so a panel opened
 later picks it up.
+
+### Live mirror
+
+"Live mirror: see it on you now" in the fitting room opens the camera with the garment drawn on you.
+The side panel can't show Chrome's camera prompt, so the first time it opens `mirror.html` in a tab,
+which can; after that it runs inside the panel.
+
+Each frame, MediaPipe's pose landmarker (lite) finds shoulders, elbows, wrists, hips, knees and
+ankles, and the selfie multiclass segmenter labels skin, hair, clothes and background. The garment
+was cut out once when it was picked: the clothes mask when a model wears it (a regular top stops
+near the hips; kurtas and tunics keep their length), or a background cut when it's laid flat. The
+cut-out is a grid mesh skinned to the torso and limb bones (`lib/mirror/skin.ts`), so sleeves follow
+the arms. WebGL then draws the camera frame, takes off the person's own clothes where the new
+garment replaces them (matched by colour, so a top leaves the jeans alone) as skin or as the room
+behind, carries small gaps over with the garment's edge, puts the camera's folds on the new fabric,
+and keeps hands in front of it. "Make it real" saves the frame as the photo and starts an AI
+try-on. Add `#mirror-debug` to the panel's address to see the body mask instead.
+
+Everything runs on the device; MediaPipe's WASM and models are bundled (about 37 MB), nothing is
+fetched at run time.
 
 ### Your photo
 
@@ -113,6 +142,7 @@ Each API error code has a friendly message (`src/lib/errors.ts`).
 | `unlimitedStorage` | Photo and try-on results stay in IndexedDB on the device instead of a server. |
 | `optional_host_permissions: https://*/*` | Requested per image CDN, only when the user clicks "Allow images from <site>", for stores whose CDN blocks cross-origin reads. |
 | `host_permissions: <API origin>` | Calls to our Try-On API only. |
+| `externally_connectable: <web origin>` | Lets only the Try-On web site hand the account token back after "Sign in with Google". |
 
 Data disclosure: the person photo and the garment image are sent to our API only when the user
 presses "Try it on", and forwarded to the AI provider, which deletes them within 1 hour and does
@@ -156,5 +186,6 @@ storage fallback, the fallback detector, the manifest permission set, and the PN
 - The screenshot fallback only works while the image is visible on screen in the active tab.
 - No on-device person check yet (one person, torso visible); only size and orientation checks.
 - Upload of the person photo is allowed for development; the public free tier will be camera-only.
-- Privacy and Terms links are placeholders (`LINKS` in `src/lib/config.ts`).
-- No sign-in: free renders are counted per install token (server side).
+- The live mirror is a cut-out of the product photo skinned to the body, front view only, without
+  cloth physics.
+- Sign-in needs `GOOGLE_CLIENT_ID` on the API and the web site at `TRYON_WEB` deployed.

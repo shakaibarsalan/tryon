@@ -10,6 +10,7 @@ Images are never stored: the ledger in D1 holds ids, status, cost and timings on
 # from api/
 npm run migrate:local            # wrangler d1 migrations apply tryon-dev --local
 npm run dev                      # wrangler dev --ip 0.0.0.0 --port 8787 (PROVIDER=mock)
+npx wrangler dev --port 8787 --var PROVIDER:self-hosted  # real try-on via vton-server on this machine (free)
 npx wrangler dev --port 8787 --var PROVIDER:hf-space   # real try-on via the free HF Space (dev only)
 
 # from the repo root
@@ -24,7 +25,7 @@ and `wrangler deploy --env production` (that env sets `ENVIRONMENT=production` a
 
 | Name | Kind | Default | Meaning |
 |---|---|---|---|
-| `PROVIDER` | var | `mock` | `mock`, `fashn`, or `hf-space` (dev only; refused when `ENVIRONMENT=production`) |
+| `PROVIDER` | var | `mock` | `mock`, `self-hosted`, `fashn`, or `hf-space` (dev only; refused when `ENVIRONMENT=production`) |
 | `ENVIRONMENT` | var | `development` | `production` disables the dev token-secret fallback and `hf-space` |
 | `DAILY_BUDGET_USD` | var | `5` | Spend breaker, per provider per UTC day |
 | `FREE_RENDERS_PER_INSTALL` | var | `3` | Lifetime free renders per install token |
@@ -32,9 +33,14 @@ and `wrangler deploy --env production` (that env sets `ENVIRONMENT=production` a
 | `FASHN_MODE` | var | `balanced` | `performance`, `balanced` or `quality` |
 | `ALLOWED_ORIGINS` | var | `chrome-extension://*,http://localhost:*,http://127.0.0.1:*` | CORS patterns; `*` works as host, `*.` host prefix, or port |
 | `HF_NUM_TIMESTEPS` | var, optional | `30` | hf-space only (Space default is 50; 10-50) |
+| `VTON_SERVER_URL` | var | `http://127.0.0.1:7861` | self-hosted only: where `vton-server` listens (https in production) |
+| `VTON_NUM_TIMESTEPS` | var, optional | server default | self-hosted only: diffusion steps per render, 10-50 |
+| `GOOGLE_CLIENT_ID` | var, optional | none | Google OAuth client id(s), comma-separated. Set it to turn "Sign in with Google" on |
+| `ACCOUNT_RENDERS_PER_MONTH` | var | `5` | Renders per UTC month for a signed-in account, after the install's free ones |
 | `INSTALL_TOKEN_SECRET` | **secret** | none | Signs install tokens, keys the IP hash. Required in production; dev falls back to a public, loudly logged key |
 | `FASHN_API_KEY` | **secret** | none | Needed for `PROVIDER=fashn` |
 | `HF_TOKEN` | **secret**, optional | none | More ZeroGPU quota for `hf-space` |
+| `VTON_SERVER_TOKEN` | **secret** | none | Bearer token for `vton-server`; required for `self-hosted` in production |
 
 Locally, put secrets in `api/.dev.vars` (git-ignored; copy `.dev.vars.example`). In production use
 `wrangler secret put NAME --env production`. Never put real values in code, config or chat.
@@ -44,7 +50,10 @@ Locally, put secrets in `api/.dev.vars` (git-ignored; copy `.dev.vars.example`).
 | Route | Auth | Result |
 |---|---|---|
 | `POST /v1/installs` | none | `201 InstallToken` |
-| `GET /v1/me` | `X-Install-Token` | `200 QuotaView` |
+| `GET /v1/me` | `X-Install-Token` (+ `X-Account-Token`) | `200 QuotaView`, with `account` when signed in |
+| `DELETE /v1/me` | `X-Install-Token` (+ `X-Account-Token`) | `200 {deleted: true}`: the install, its ledger rows, and the account if one was sent |
+| `GET /v1/config` | none | `200 {provider, free_renders_per_install, account_renders_per_month, google_client_id?}` |
+| `POST /v1/auth/google` | none | `{id_token}` from Google -> `200 {account_token, renders_left_this_month, renders_per_month}`; `404` when sign-in is off |
 | `POST /v1/renders` | `X-Install-Token` + `Idempotency-Key` | `202 RenderJob` (new) or `200` + `Idempotent-Replayed: true` (same key) |
 | `GET /v1/renders/:id` | owner's token | `200 RenderJob`; polls the provider once; `result_image` when completed |
 | `POST /v1/renders/:id/feedback` | owner's token | `{accepted: bool}` -> `200 {id, accepted}`; `409` if not completed |
@@ -53,8 +62,16 @@ Locally, put secrets in `api/.dev.vars` (git-ignored; copy `.dev.vars.example`).
 
 `POST /v1/renders` checks, in order: token -> body (data URLs: jpeg/png/webp, base64, magic bytes,
 <= `LIMITS.maxImageBytes`; category; origin-only `site_origin`; `client_ref` <= 64) -> idempotency ->
-IP daily limit -> install quota -> spend breaker (reserve the estimate) -> provider start -> ledger row.
-Anything refused after the IP step gives back what it took (IP slot, free render, reservation).
+IP daily limit -> quota (the install's free renders, then a signed-in account's monthly renders) ->
+spend breaker (reserve the estimate) -> provider start -> ledger row. Anything refused after the IP
+step gives back what it took (IP slot, free render, reservation).
+
+Sign-in checks Google's ID token (RS256 against Google's published keys, issuer, audience, expiry)
+and keeps only a keyed hash of the Google account id. An account token that is invalid or deleted is
+ignored rather than answered with 401, so the install token keeps working.
+
+A cron trigger (`17 3 * * *`) runs `src/retention.ts`: ledger rows after 90 days, IP counters after
+2, install records after a year without try-ons, account month counts after 13 months.
 
 On `GET`, a finished job converts its reservation to spend (completed) or releases it (failed). A
 `provider_error` failure refunds the free render; `pose_not_found` and `content_blocked` do not.
@@ -82,6 +99,10 @@ Errors are `{"error":{"code","message"}}`:
   `provider_error`, `mock:pose` -> `pose_not_found`, `mock:start-fail` -> start fails (502). Cost 0.
 - **fashn**: `POST https://api.fashn.ai/v1/run` (`tryon-v1.6`, base64 output, conservative moderation),
   `GET /v1/status/{id}`. $0.075 per render. 429/5xx on poll are treated as transient (job unchanged).
+- **self-hosted**: `vton-server/` (FASHN VTON 1.5 on a Mac or GPU). `POST /v1/tryon`, then
+  `GET /v1/tryon/{id}`, which reports queue place and step progress (passed on as `queue_position`
+  and `progress`). Cost 0. The server's body check answers `pose_not_found` with a plain reason. In
+  production it needs an https URL and `VTON_SERVER_TOKEN`.
 - **hf-space** (dev only): Gradio Space `fashn-ai/fashn-vton-1.5`, endpoint `/try_on`
   (`POST /gradio_api/call/try_on` then the SSE result). `auto` category becomes `tops`, `auto` photo
   type becomes `model`. The first `GET /v1/renders/:id` blocks until the Space finishes (~25-60 s).
@@ -126,7 +147,9 @@ src/cors.ts         origin patterns, preflight
 src/token.ts        HMAC install tokens, IP hashing, dev-secret fallback
 src/validate.ts     body, data URL and origin validation
 src/store/          Store interface, D1Store, MemoryStore (tests)
-src/providers/      mock, fashn, hf-space
+src/providers/      mock, self-hosted, fashn, hf-space
+src/google.ts       Google ID token check for sign-in
+src/retention.ts    nightly cleanup schedule
 migrations/         D1 schema (no image columns)
 test/               vitest suites
 ```
