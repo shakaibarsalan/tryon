@@ -3,7 +3,7 @@
 See clothes from any online store on you before you buy: live on your camera, or as an AI photo.
 
 [![Live demo](https://img.shields.io/badge/live%20demo-tryonlab.vercel.app-3b1f4a)](https://tryonlab.vercel.app)
-[![Tests](https://img.shields.io/badge/tests-299%20%2B%2029%20passing-2e7d4f)](#run-it)
+[![Tests](https://img.shields.io/badge/tests-302%20%2B%2029%20passing-2e7d4f)](#run-it)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](tsconfig.base.json)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3%20extension-4285f4)](extension)
 [![Cloudflare Workers](https://img.shields.io/badge/API-Cloudflare%20Workers-f38020)](api)
@@ -120,7 +120,7 @@ flowchart LR
 - Privacy notice and terms, a 90-day retention schedule run nightly, and server-side deletion from "Delete all my data".
 - Consent screen and 18+ check before any photo. Camera capture with a countdown, or upload.
 - API with HMAC install tokens, 3 free renders per install, a per-IP daily limit (the IP is stored only as an HMAC hash), a $5/day spend breaker per provider, and refunds when a provider fails.
-- 299 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
+- 302 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
 
 | The fitting room, before you start | A finished render, with feedback and download |
 |---|---|
@@ -223,6 +223,7 @@ docs/                Privacy notice and terms, CORS results, provider research, 
 - Sign-in is built and tested, but it needs a Google OAuth client id (free) to switch on.
 - The API isn't deployed, so the hosted demo answers AI photos in the page. The Chrome Web Store zip is ready but not submitted.
 - The mirror predicts where a moving body is going, so if you stop suddenly the garment can run on a little past you for a moment.
+- When the model in the product photo has long hair over a shoulder, the segmenter can't see the garment under it, so that shoulder of the cut-out has a ragged top edge.
 - With the MediaPipe models the extension is about 37 MB.
 - Images inside cross-origin iframes aren't detected, and the screenshot fallback only works while the image is on screen.
 

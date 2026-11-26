@@ -17,6 +17,7 @@ import { planPortraitCrop, type CropPlan } from "../lib/image-math";
 import {
   LANDMARK,
   borderColour,
+  closeGaps,
   cutOutFlatLay,
   flatLayAnchors,
   keepMainBlobs,
@@ -284,6 +285,8 @@ async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<Prepare
       }
     }
     alpha = keepMainBlobs(alpha, w, h, 0.15);
+    // Strands of the model's hair across the garment are left out by the segmenter: close those thin gaps.
+    alpha = closeGaps(alpha, w, h, 3);
     anchors = body;
   } else {
     alpha = cutOutFlatLay(pixels.data, w, h);
@@ -397,13 +400,15 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   // gets the average milliseconds per stage, a number in globalThis.__mirrorLevel pins the speed step,
   // and globalThis.__mirrorSync = true also waits for the GPU after each frame (slows the mirror down).
   // globalThis.__mirrorTrace keeps the last minute of body points and frame times, to replay smoothing
-  // and prediction offline (lib/mirror/track.ts).
+  // and prediction offline (lib/mirror/track.ts), and globalThis.__mirrorGarment the garment cut-out.
   const profile = /mirror-profile/.test(location.hash);
   const dev = globalThis as unknown as {
     __mirrorProfile?: Record<string, number>;
     __mirrorLevel?: number;
     __mirrorSync?: boolean;
     __mirrorTrace?: { width: number; height: number; frames: number[]; poses: { at: number; recv: number; raw: Anchors }[] };
+    /** The garment cut-out, as drawn on the body (PNG data URL). */
+    __mirrorGarment?: string;
   };
   const trace = profile ? { width: 0, height: 0, frames: [] as number[], poses: [] as { at: number; recv: number; raw: Anchors }[] } : null;
   if (trace) dev.__mirrorTrace = trace;
@@ -714,6 +719,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         garment = prepared;
         positions = null;
         renderer.setGarment(prepared.canvas, prepared.mesh);
+        if (profile) dev.__mirrorGarment = prepared.canvas.toDataURL("image/png");
         if (!lanes && !broken) emit({ state: "loading", message: "Loading the body tracker…" });
         return prepared.info;
       } finally {

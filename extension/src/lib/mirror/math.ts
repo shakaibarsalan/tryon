@@ -461,3 +461,48 @@ export function sleeveJoints(alpha: Uint8ClampedArray, width: number, height: nu
   }
   return out;
 }
+
+/**
+ * Running max (grow) or min over a window of 2r + 1 along one row or column, outside counted as
+ * empty: van Herk / Gil-Werman, three passes whatever r is. g and hh are scratch of len + 2r.
+ */
+function slide(src: Uint8ClampedArray, dst: Uint8ClampedArray, start: number, step: number, len: number, r: number, grow: boolean, g: Uint8Array, hh: Uint8Array): void {
+  const k = 2 * r + 1;
+  const m = len + 2 * r;
+  const pad = grow ? 0 : 255;
+  const at = (j: number) => {
+    const t = j - r;
+    return t >= 0 && t < len ? src[start + t * step]! : pad;
+  };
+  const op = grow ? (a: number, b: number) => (a > b ? a : b) : (a: number, b: number) => (a < b ? a : b);
+  for (let j = 0; j < m; j++) g[j] = j % k === 0 ? at(j) : op(g[j - 1]!, at(j));
+  for (let j = m - 1; j >= 0; j--) hh[j] = (j + 1) % k === 0 || j === m - 1 ? at(j) : op(hh[j + 1]!, at(j));
+  for (let t = 0; t < len; t++) dst[start + t * step] = op(hh[t]!, g[t + 2 * r]!);
+}
+
+/**
+ * Fills gaps in a cut-out narrower than 2r + 1 px (strands of a model's hair lying across the
+ * garment, a seam the segmenter missed): a greyscale closing, max then min over a square, that only
+ * ever adds alpha. Wider openings, like the space between an arm and the body, are left alone.
+ */
+export function closeGaps(alpha: Uint8ClampedArray, width: number, height: number, r: number): Uint8ClampedArray {
+  if (r <= 0) return alpha.slice();
+  // Worked on a copy with an empty border r wide, so the image edge counts as empty, not as garment.
+  const pw = width + 2 * r;
+  const ph = height + 2 * r;
+  let img: Uint8ClampedArray = new Uint8ClampedArray(pw * ph);
+  for (let y = 0; y < height; y++) img.set(alpha.subarray(y * width, (y + 1) * width), (y + r) * pw + r);
+  const g = new Uint8Array(Math.max(pw, ph) + 2 * r);
+  const hh = new Uint8Array(g.length);
+  const pass = (src: Uint8ClampedArray, horizontal: boolean, grow: boolean): Uint8ClampedArray => {
+    const out = new Uint8ClampedArray(src.length);
+    if (horizontal) for (let y = 0; y < ph; y++) slide(src, out, y * pw, 1, pw, r, grow, g, hh);
+    else for (let x = 0; x < pw; x++) slide(src, out, x, pw, ph, r, grow, g, hh);
+    return out;
+  };
+  img = pass(pass(pass(pass(img, true, true), false, true), true, false), false, false);
+  const closed = new Uint8ClampedArray(width * height);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) closed[y * width + x] = Math.max(img[(y + r) * pw + x + r]!, alpha[y * width + x]!);
+  return closed;
+}

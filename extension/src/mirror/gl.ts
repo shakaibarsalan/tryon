@@ -67,7 +67,7 @@ void main() {
 const COMPOSITE_FS = `#version 300 es
 precision highp float;
 in vec2 vUv;
-uniform sampler2D uVideo, uMask, uPlate, uLayer, uAux;
+uniform sampler2D uVideo, uMask, uPlate, uLayer, uAux, uClothes;
 uniform vec4 uCrop;
 uniform vec2 uSize;
 uniform bool uMirror, uTakeOff, uGarmentOn, uHasMask, uHasTorso;
@@ -114,35 +114,48 @@ bool inArm(vec2 p) {
 }
 // The mask is a few frames old: look where this pixel's body was when the mask was made.
 float catAt(vec2 vuv) { return floor(texture(uMask, vuv - uMaskShift).r * 255.0 + 0.5); }
-// Old clothes here or within a few pixels: the segmenter's mask is coarse, and an undilated test
-// leaves a thin fringe of the old shirt around the new garment.
-bool oldClothes(vec2 vuv) {
-  vec2 d = 8.0 / (uSize / uCrop.zw);
-  if (catAt(vuv) == 4.0) return true;
-  for (int i = 0; i < 8; i++) {
-    float a = float(i) * 0.785398;
-    if (catAt(vuv + vec2(cos(a), sin(a)) * d) == 4.0) return true;
-  }
-  return false;
+// How surely old clothing is here or within a few pixels, 0..1. uClothes holds 1 where the segmenter
+// says clothes (red) and where it sees the person at all (green), with mipmaps. A blurred level grows
+// the clothes edge a little (the mask is coarse, and an exact edge leaves a fringe of the old shirt)
+// and softens it; the person's own outline stops that growth, so nothing smears onto the room. An
+// on/off test at fixed offsets drew stepped outlines along the shoulders.
+float clothesCover(vec2 vuv) {
+  vec2 q = vuv - uMaskShift;
+  float near = texture(uClothes, q).r;
+  float wide = textureLod(uClothes, q, 3.0).r;
+  float person = textureLod(uClothes, q, 1.0).g;
+  return max(smoothstep(0.25, 0.75, near), smoothstep(0.05, 0.3, wide)) * smoothstep(0.2, 0.6, person);
 }
-// Old clothes sticking out a little past the new garment: carry the garment's edge over them by
-// looking towards the middle of the body for the nearest garment pixel. Small mismatches in width or
-// length then read as the new garment; bigger gaps are taken off as skin.
-vec4 garmentEdge(vec2 uv) {
+// Signed distance (px) to the body parts this garment replaces (uTorso and uLimb): negative inside.
+float bodyDist(vec2 p) {
+  float d = 1e9;
+  if (uHasTorso) {
+    float e = 1e9;
+    for (int i = 0; i < 4; i++) e = min(e, segDist(p, uTorso[i], uTorso[(i + 1) % 4]));
+    d = inTorso(p) ? -e : e;
+  }
+  for (int i = 0; i < 12; i++) { if (i >= uLimbN) break; d = min(d, segDist(p, uLimb[i].xy, uLimb[i].zw) - uLimbR[i]); }
+  return d;
+}
+// Old clothes sticking out a little past the new garment: carry the garment over them by looking
+// towards the middle of the body for its nearest edge. The colour comes from a blurred copy of the
+// garment layer: mirrored or smeared fabric streaked, and neighbouring pixels that found the edge
+// at different steps made speckled seams. dist is how far the edge was (px), or 1e9.
+vec4 garmentEdge(vec2 uv, out float dist) {
+  dist = 1e9;
   vec2 c = uCenter / uSize;
   vec2 dir = c - uv;
-  float len = length(dir * uSize);
-  if (len < 1.0) return vec4(0.0);
+  if (length(dir * uSize) < 1.0) return vec4(0.0);
   dir = dir / length(dir);
   float stepUv = 0.006;
+  float stepPx = length(dir * uSize) * stepUv;
   for (int i = 1; i <= 18; i++) {
     vec2 q = uv + dir * float(i) * stepUv;
-    vec4 gq = texture(uLayer, vec2(q.x, 1.0 - q.y));
-    if (gq.a > 0.7) {
-      // Mirror the fabric across its edge instead of smearing the edge pixel (which streaks).
-      vec2 r = uv + dir * float(2 * i) * stepUv;
-      vec4 gr = texture(uLayer, vec2(r.x, 1.0 - r.y));
-      return gr.a > 0.7 ? gr : gq;
+    if (textureLod(uLayer, vec2(q.x, 1.0 - q.y), 1.0).a > 0.5) {
+      dist = float(i) * stepPx;
+      vec2 r = q + dir * 2.0 * stepUv; // a little inside, past the soft edge
+      vec4 b = textureLod(uLayer, vec2(r.x, 1.0 - r.y), 3.0);
+      return b.a > 0.05 ? vec4(b.rgb / b.a, 1.0) : vec4(0.0);
     }
   }
   return vec4(0.0);
@@ -161,25 +174,40 @@ void main() {
   float lb = max(lum(blur), 0.03);
   vec3 color = cam;
   // Take the old clothes off where the new garment doesn't cover them: skin on the body parts this
-  // garment replaces (uTorso and uLimb hold only those), the room behind loose fabric beside them.
-  bool body = inTorso(p) || inLimb(p);
-  // Only the clothes this garment replaces: jeans and a shirt are both "clothes" to the segmenter,
-  // so the colour of the old garment (sampled mid-chest, or mid-thigh for bottoms) tells them apart.
-  bool replaced = !uHasOld || distance(cam, uOld) < 0.3 || distance(blur, uOld) < 0.22;
-  if (uTakeOff && uGarmentOn && uHasMask && g.a < 0.6 && body && replaced && oldClothes(vuv)) {
-    vec4 edge = garmentEdge(uv);
-    if (edge.a > 0.0) {
-      g = vec4(edge.rgb, edge.a) * (1.0 - g.a) + g; // the garment's edge carried over the old fabric
-    } else {
-      // Smooth skin from the coarse light only: fine texture of the old fabric would show through.
-      vec3 coarse = textureLod(uVideo, vuv, 6.5).rgb;
-      color = uSkin * clamp(lum(coarse) / uSceneLum, 0.75, 1.15);
+  // garment replaces, the room behind loose fabric beside them. Every test here is a soft weight, so
+  // the edges of what comes off are feathered rather than stepped or speckled.
+  float take = 0.0;
+  float behind = 0.0;
+  if (uTakeOff && uGarmentOn && uHasMask) {
+    // Only the clothes this garment replaces: jeans and a shirt are both "clothes" to the segmenter,
+    // so the colour of the old garment (sampled mid-chest, or mid-thigh for bottoms) tells them apart.
+    // A slightly blurred camera, so sensor noise doesn't flip single pixels.
+    vec3 camSoft = textureLod(uVideo, vuv, 1.0).rgb;
+    float same = uHasOld ? max(1.0 - smoothstep(0.24, 0.36, distance(camSoft, uOld)), 1.0 - smoothstep(0.16, 0.28, distance(blur, uOld))) : 1.0;
+    float free = 1.0 - smoothstep(0.35, 0.75, g.a);
+    float w = same * free;
+    if (w > 0.0) {
+      float onBody = 1.0 - smoothstep(-5.0, 5.0, bodyDist(p));
+      float cover = clothesCover(vuv);
+      take = w * onBody * cover;
+      if (uHasTorso && onBody < 1.0) {
+        float dt = 1e9;
+        for (int i = 0; i < 4; i++) dt = min(dt, segDist(p, uTorso[i], uTorso[(i + 1) % 4]));
+        behind = w * (1.0 - onBody) * cover * (1.0 - smoothstep(0.05, 0.065, dt / uSize.x));
+      }
     }
-  } else if (uTakeOff && uGarmentOn && cat == 4.0 && g.a < 0.6 && uHasTorso && !body && replaced) {
-    float dt = 1e9;
-    for (int i = 0; i < 4; i++) dt = min(dt, segDist(p, uTorso[i], uTorso[(i + 1) % 4]));
-    if (dt < uSize.x * 0.06) color = texture(uPlate, fuv).rgb;
   }
+  if (take > 0.0) {
+    // Near the new garment's edge (a small mismatch in width or length) the garment carries on; with
+    // a bigger gap, skin, from the coarse light only: fine texture of the old fabric would show through.
+    float dist;
+    vec4 edge = garmentEdge(uv, dist);
+    float e = edge.a > 0.0 ? 1.0 - smoothstep(35.0, 60.0, dist) : 0.0;
+    vec3 coarse = textureLod(uVideo, vuv, 6.5).rgb;
+    color = mix(color, uSkin * clamp(lum(coarse) / uSceneLum, 0.75, 1.15), take * (1.0 - e));
+    g += vec4(edge.rgb, 1.0) * (take * e) * (1.0 - g.a);
+  }
+  if (behind > 0.0) color = mix(color, texture(uPlate, fuv).rgb, behind);
   if (g.a > 0.002) {
     vec3 gc = g.rgb / g.a;
     // Only the camera's local folds go on the new fabric (luminance against its blurred
@@ -233,6 +261,10 @@ export interface Capsule {
   r: number;
 }
 
+/** MediaPipe "selfie multiclass" categories: background and clothes. */
+const BACKGROUND = 0;
+const CLOTHES = 4;
+
 export interface FrameInput {
   video: HTMLVideoElement;
   crop: { sx: number; sy: number; sw: number; sh: number };
@@ -271,6 +303,10 @@ export class MirrorRenderer {
   private readonly compProg: WebGLProgram;
   private readonly videoTex: WebGLTexture;
   private readonly maskTex: WebGLTexture;
+  /** Red 255 where the mask says clothes, green where it sees the person; mipmapped (clothesCover in the shader). */
+  private readonly clothesTex: WebGLTexture;
+  private clothes: Uint8Array = new Uint8Array(0);
+  private lastMask: Uint8Array | null = null;
   private readonly garmentTex: WebGLTexture;
   private plates: [WebGLTexture, WebGLTexture];
   private plateFbos: [WebGLFramebuffer, WebGLFramebuffer];
@@ -308,10 +344,11 @@ export class MirrorRenderer {
     gl.bindVertexArray(null);
     this.videoTex = texture(gl, gl.LINEAR_MIPMAP_LINEAR);
     this.maskTex = texture(gl, gl.NEAREST);
+    this.clothesTex = texture(gl, gl.LINEAR_MIPMAP_LINEAR);
     this.garmentTex = texture(gl);
     this.plates = [texture(gl), texture(gl)];
     this.plateFbos = [gl.createFramebuffer()!, gl.createFramebuffer()!];
-    this.layerTex = texture(gl);
+    this.layerTex = texture(gl, gl.LINEAR_MIPMAP_LINEAR); // blurred levels colour the garment's carried-over edge
     this.auxTex = texture(gl);
     this.layerFbo = gl.createFramebuffer()!;
   }
@@ -391,11 +428,23 @@ export class MirrorRenderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, f.video);
     gl.generateMipmap(gl.TEXTURE_2D);
     const hasMask = !!f.mask && f.mask.length === f.maskWidth * f.maskHeight;
-    if (hasMask) {
+    if (hasMask && f.mask !== this.lastMask) {
+      // A new mask (a few a second): upload it, and the clothes map built from it.
+      this.lastMask = f.mask;
+      const n = f.maskWidth * f.maskHeight;
+      if (this.clothes.length !== 2 * n) this.clothes = new Uint8Array(2 * n);
+      for (let i = 0; i < n; i++) {
+        const c = f.mask![i]!;
+        this.clothes[2 * i] = c === CLOTHES ? 255 : 0;
+        this.clothes[2 * i + 1] = c === BACKGROUND ? 0 : 255;
+      }
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, f.maskWidth, f.maskHeight, 0, gl.RED, gl.UNSIGNED_BYTE, f.mask);
+      gl.bindTexture(gl.TEXTURE_2D, this.clothesTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, f.maskWidth, f.maskHeight, 0, gl.RG, gl.UNSIGNED_BYTE, this.clothes);
+      gl.generateMipmap(gl.TEXTURE_2D);
     }
 
     // 1. Background plate.
@@ -437,6 +486,8 @@ export class MirrorRenderer {
       gl.drawElements(gl.TRIANGLES, this.meshCount, gl.UNSIGNED_SHORT, 0);
       gl.disable(gl.BLEND);
     }
+    gl.bindTexture(gl.TEXTURE_2D, this.layerTex);
+    gl.generateMipmap(gl.TEXTURE_2D);
 
     // 3. Composite to the canvas.
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -448,6 +499,7 @@ export class MirrorRenderer {
     this.bind(p, "uPlate", 2, this.plates[this.plateIndex]!);
     this.bind(p, "uLayer", 3, this.layerTex);
     this.bind(p, "uAux", 4, this.auxTex);
+    this.bind(p, "uClothes", 5, this.clothesTex);
     const u = (name: string) => gl.getUniformLocation(p, name);
     gl.uniform4f(u("uCrop"), ...crop);
     gl.uniform2f(u("uSize"), this.width, this.height);

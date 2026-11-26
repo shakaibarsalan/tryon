@@ -14,6 +14,7 @@ import {
   topHemRow,
   type Anchors,
   type Pt,
+  closeGaps,
 } from "../src/lib/mirror/math";
 
 const close = (p: Pt, q: Pt, eps = 1e-6) => {
@@ -184,5 +185,32 @@ describe("sleeveJoints", () => {
     expect(s.le!.x).toBe(90); // the wearer's left sleeve is on the right of the photo
     expect(s.re!.x).toBe(10);
     expect(s.lw).toBeUndefined();
+  });
+});
+
+describe("closing gaps in a cut-out", () => {
+  const W = 40;
+  const H = 30;
+  /** A garment block with a vertical slit `gap` px wide down its middle. */
+  function slit(gap: number) {
+    const a = new Uint8ClampedArray(W * H);
+    for (let y = 5; y < 25; y++) for (let x = 5; x < 35; x++) if (Math.abs(x - 20) * 2 + 1 > gap) a[y * W + x] = 255;
+    return a;
+  }
+  it("fills a slit of hair across the garment", () => {
+    const out = closeGaps(slit(3), W, H, 3);
+    expect(out[15 * W + 20]).toBe(255);
+  });
+  it("leaves a wide opening, and the outside of the garment, alone", () => {
+    const out = closeGaps(slit(13), W, H, 3);
+    expect(out[15 * W + 20]).toBe(0);
+    expect(out[2 * W + 2]).toBe(0);
+    expect(out[15 * W + 2]).toBe(0);
+  });
+  it("only ever adds alpha", () => {
+    const a = slit(3);
+    a[10 * W + 10] = 90; // a soft pixel inside
+    const out = closeGaps(a, W, H, 3);
+    for (let i = 0; i < a.length; i++) expect(out[i]!).toBeGreaterThanOrEqual(a[i]!);
   });
 });
