@@ -20,7 +20,8 @@
 // AI-generated photo with tools/fake-camera.py) and --mirror opens the live mirror on each picked
 // garment. The first time, the mirror opens in a tab (the side panel can't show Chrome's camera
 // prompt); the script then allows the camera for the extension, as a person would, and checks the
-// mirror inside the side panel. With --mirror, "Make it real" starts the AI try-on from the live frame.
+// mirror inside the side panel. With --mirror, "Make it real" starts the AI try-on from the live frame;
+// the mirror then wears that render, and the script saves a few frames of it (-mirror-fitted-N.jpg).
 //
 // Speed: --mirror-ms 20000 keeps the mirror running for 20 s while the script samples its frame
 // rate, body-tracking rate and speed step. --cpu-throttle 4 slows the side panel's own thread four
@@ -480,6 +481,8 @@ async function main() {
           // Live mirror: the first time it opens in a tab, which can ask for the camera.
           recorder?.mark(`mirror:${store.name}`);
           if (flag("mirror-debug")) await inPanel("location.hash = 'mirror-debug'; true");
+          // Developer timings, and the garment cut-out kept for saving below.
+          if (flag("mirror-profile")) await inPanel("location.hash = 'mirror-profile'; true");
           await inPanel("document.getElementById('mirror-btn').click(); true");
           await sleep(2000);
           const mirrorStatus = (s) => evaluate(cdp, s, "document.getElementById('mirror-status')?.textContent || ''");
@@ -582,6 +585,25 @@ async function main() {
           const src = await inPanel("document.getElementById('result-img').src");
           const m = /^data:image\/(\w+);base64,(.*)$/.exec(src);
           if (m) writeFileSync(join(outDir, `${slug(store.name)}-result.${m[1] === "jpeg" ? "jpg" : m[1]}`), Buffer.from(m[2], "base64"));
+          if (mirrorMode && !(await inPanel("document.getElementById('mirror').hidden"))) {
+            // The mirror stays open and switches to the AI render of the person: a few frames of that.
+            const fitted = await waitUntil(
+              async () => ((await inPanel("document.body.innerText.includes('now shows the AI version')")) ? true : undefined),
+              90_000,
+              "mirror wearing the AI render",
+              500,
+            ).catch(() => "");
+            r.mirrorFitted = !!fitted;
+            await sleep(2500);
+            const png = flag("mirror-profile") ? await inPanel("globalThis.__mirrorGarment || ''") : "";
+            if (png) writeFileSync(join(outDir, `${slug(store.name)}-fitted-cutout.png`), Buffer.from(png.split(",")[1], "base64"));
+            for (let i = 1; i <= 4; i++) {
+              const data = await inPanel("document.getElementById('mirror-canvas').toDataURL('image/jpeg', 0.85)");
+              writeFileSync(join(outDir, `${slug(store.name)}-mirror-fitted-${i}.jpg`), Buffer.from(data.split(",")[1], "base64"));
+              await sleep(900);
+            }
+            log(`${store.name}: mirror ${fitted ? "wearing the AI render" : "did not switch to the AI render"}`);
+          }
         }
         recorder?.mark(`done:${store.name}`);
         await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 85 }, panel).then(
