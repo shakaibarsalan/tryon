@@ -15,6 +15,7 @@ import {
   type Anchors,
   type Pt,
   closeGaps,
+  defringe,
 } from "../src/lib/mirror/math";
 
 const close = (p: Pt, q: Pt, eps = 1e-6) => {
@@ -212,5 +213,19 @@ describe("closing gaps in a cut-out", () => {
     a[10 * W + 10] = 90; // a soft pixel inside
     const out = closeGaps(a, W, H, 3);
     for (let i = 0; i < a.length; i++) expect(out[i]!).toBeGreaterThanOrEqual(a[i]!);
+  });
+});
+
+describe("defringing a cut-out", () => {
+  it("gives the soft edge the fabric's colour and keeps its alpha", () => {
+    const W = 6;
+    const rgba = new Uint8ClampedArray(W * 4);
+    const alpha = new Uint8ClampedArray([255, 255, 140, 60, 0, 0]);
+    for (let i = 0; i < W; i++) rgba.set(i < 2 ? [20, 20, 20, 255] : [200, 200, 200, 255], i * 4); // black tee, light backdrop
+    defringe(rgba, alpha, W, 1);
+    expect([rgba[8], rgba[9], rgba[10]]).toEqual([20, 20, 20]);
+    expect([rgba[12], rgba[13], rgba[14]]).toEqual([20, 20, 20]);
+    expect([rgba[16], rgba[17], rgba[18]]).toEqual([200, 200, 200]); // fully transparent: untouched
+    expect(Array.from(alpha)).toEqual([255, 255, 140, 60, 0, 0]);
   });
 });

@@ -506,3 +506,60 @@ export function closeGaps(alpha: Uint8ClampedArray, width: number, height: numbe
     for (let x = 0; x < width; x++) closed[y * width + x] = Math.max(img[(y + r) * pw + x + r]!, alpha[y * width + x]!);
   return closed;
 }
+
+/**
+ * Gives the soft edge of a cut-out the colour of the fabric beside it, keeping its alpha. Edge pixels
+ * mix the garment with whatever was behind it in the photo (a light backdrop, skin at a neckline),
+ * which drew a light or skin-coloured line around the garment on the person. Colour is carried in
+ * from solid pixels (alpha >= solid), nearest first.
+ */
+export function defringe(rgba: Uint8ClampedArray, alpha: Uint8ClampedArray, width: number, height: number, solid = 230): void {
+  const n = width * height;
+  const known = new Uint8Array(n);
+  const queued = new Uint8Array(n);
+  const queue = new Int32Array(n);
+  let head = 0;
+  let tail = 0;
+  const edge = (i: number) => alpha[i]! > 0 && alpha[i]! < solid;
+  const near = (i: number, visit: (j: number) => void) => {
+    const x = i % width;
+    if (x > 0) visit(i - 1);
+    if (x < width - 1) visit(i + 1);
+    if (i >= width) visit(i - width);
+    if (i < n - width) visit(i + width);
+  };
+  for (let i = 0; i < n; i++) if (alpha[i]! >= solid) known[i] = 1;
+  for (let i = 0; i < n; i++) {
+    if (!edge(i)) continue;
+    let touches = false;
+    near(i, (j) => (touches ||= !!known[j]));
+    if (touches) {
+      queued[i] = 1;
+      queue[tail++] = i;
+    }
+  }
+  while (head < tail) {
+    const i = queue[head++]!;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let c = 0;
+    near(i, (j) => {
+      if (!known[j]) return;
+      r += rgba[j * 4]!;
+      g += rgba[j * 4 + 1]!;
+      b += rgba[j * 4 + 2]!;
+      c++;
+    });
+    rgba[i * 4] = r / c;
+    rgba[i * 4 + 1] = g / c;
+    rgba[i * 4 + 2] = b / c;
+    known[i] = 1;
+    near(i, (j) => {
+      if (edge(j) && !queued[j]) {
+        queued[j] = 1;
+        queue[tail++] = j;
+      }
+    });
+  }
+}

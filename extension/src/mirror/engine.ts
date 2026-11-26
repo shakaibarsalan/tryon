@@ -18,6 +18,7 @@ import {
   LANDMARK,
   borderColour,
   closeGaps,
+  defringe,
   cutOutFlatLay,
   flatLayAnchors,
   keepMainBlobs,
@@ -31,7 +32,7 @@ import {
 } from "../lib/mirror/math";
 import { InlineLane, WorkerLane, readMask, readPose, startWorker, type Lane, type Landmark, type MaskAnswer, type WorkerLike } from "../lib/mirror/lanes";
 import { POSE_MODEL, POSE_SETTINGS, SEGMENT_MODEL } from "../lib/mirror/models";
-import { QualityGovernor } from "../lib/mirror/quality";
+import { QUALITY_LEVELS, QualityGovernor } from "../lib/mirror/quality";
 import { AnchorTracker } from "../lib/mirror/track";
 import { buildMesh, deformMesh, type GarmentMesh } from "../lib/mirror/skin";
 import { ENGINE_GLOBAL, type MirrorEngine, type MirrorGarment, type MirrorSession, type MirrorStatus, type PreparedGarmentInfo } from "../lib/mirror/types";
@@ -48,7 +49,7 @@ const CLOTHES = 4;
  * laid-flat garment gets more width: its points sit on the outer shoulder seams, while the pose
  * model's shoulder points are the joints, a few centimetres further in.
  */
-const INFLATE = { "on-model": { x: 1.06, y: 1.03 }, "flat-lay": { x: 1.2, y: 1.05 } } as const;
+const INFLATE = { "on-model": { x: 1.06, y: 1.03 }, "flat-lay": { x: 1.2, y: 1.05 }, fitted: { x: 1.02, y: 1.0 } } as const;
 
 /** Camera frames go to the workers at most this size on the long side (the models work at 256). */
 const GRAB_SIDE = 640;
@@ -236,6 +237,7 @@ async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<Prepare
 
   let alpha: Uint8ClampedArray;
   let anchors: Anchors | null;
+  if (g.fitted && !onModel) throw new Error("The AI render doesn't show the whole upper body");
   if (onModel) {
     const seg = m.segmenter.segment(work);
     const mask = seg.confidenceMasks?.[CLOTHES]?.getAsFloat32Array();
@@ -301,6 +303,10 @@ async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<Prepare
   }
   if (!anchors) throw new Error("Couldn't find the garment's shape in this photo");
 
+  // The soft edge takes the fabric's colour: otherwise the photo's backdrop (or skin at a neckline)
+  // draws a light line around the garment on the person.
+  defringe(pixels.data, alpha, w, h);
+
   // Apply the mask and crop to the garment.
   let x0 = w, y0 = h, x1 = -1, y1 = -1;
   for (let i = 0; i < w * h; i++) {
@@ -329,7 +335,8 @@ async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<Prepare
 
   // Rest points on the cut-out, pulled towards the middle so the garment comes out a bit larger.
   const kind = onModel ? "on-model" : "flat-lay";
-  const k = INFLATE[kind];
+  // An AI render of the person already fits them: only the slightest widening, over the seams.
+  const k = g.fitted ? INFLATE.fitted : INFLATE[kind];
   const pts = Object.values(anchors) as Pt[];
   const c = { x: pts.reduce((s, p) => s + p.x, 0) / pts.length - x0, y: pts.reduce((s, p) => s + p.y, 0) / pts.length - y0 };
   const rest: Anchors = {};
@@ -350,11 +357,11 @@ async function prepareGarment(g: MirrorGarment, m: PhotoModels): Promise<Prepare
  * there are taken off), plus forearms and hands (kept in front). A top replaces the shirt, not the
  * trousers; bottoms replace the trousers; a dress replaces both.
  */
-function bodyShapes(a: Anchors, category: MirrorCategory | null): { limbs: Capsule[]; arms: Capsule[]; torso: Pt[] | null } {
+function bodyShapes(a: Anchors, category: MirrorCategory | null): { limbs: Capsule[]; arms: Capsule[]; torso: Pt[] | null; core: Pt[] | null } {
   const sw = a.ls && a.rs ? Math.hypot(a.ls.x - a.rs.x, a.ls.y - a.rs.y) : a.lh && a.rh ? Math.hypot(a.lh.x - a.rh.x, a.lh.y - a.rh.y) * 1.3 : 0;
   const limbs: Capsule[] = [];
   const arms: Capsule[] = [];
-  if (!sw) return { limbs, arms, torso: null };
+  if (!sw) return { limbs, arms, torso: null, core: null };
   const add = (from?: Pt, to?: Pt, r = 0.15) => {
     if (from && to) limbs.push({ a: from, b: to, r: r * sw });
   };
@@ -382,14 +389,18 @@ function bodyShapes(a: Anchors, category: MirrorCategory | null): { limbs: Capsu
     if (e && wr) arms.push({ a: e, b: { x: wr.x + (wr.x - e.x) * 0.4, y: wr.y + (wr.y - e.y) * 0.4 }, r: 0.13 * sw });
   }
   let torso: Pt[] | null = null;
+  let core: Pt[] | null = null;
   const quad = category === "bottoms" ? [a.lh, a.rh, a.rk, a.lk] : [a.ls, a.rs, a.rh, a.lh];
   if (quad.every(Boolean)) {
     const q = quad as Pt[];
+    // The body between its own joints: an arm hanging at the side is outside it, a hand in front of
+    // the stomach inside (the renderer keeps such hands in front of the garment).
+    core = q;
     const cx = q.reduce((s, p) => s + p.x, 0) / 4;
     const cy = q.reduce((s, p) => s + p.y, 0) / 4;
     torso = q.map((p) => ({ x: cx + (p.x - cx) * 1.22, y: cy + (p.y - cy) * 1.3 }));
   }
-  return { limbs, arms, torso };
+  return { limbs, arms, torso, core };
 }
 
 async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetBase: string; mirrored?: boolean }): Promise<MirrorSession> {
@@ -563,6 +574,9 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   let positions: Float32Array<ArrayBuffer> | null = null;
   // Cheaper steps when tracking falls behind the camera (older laptops, phones): see lib/mirror/quality.ts.
   const governor = new QualityGovernor();
+  // setLight(true): body tracking only while an AI render needs the GPU, then back to where it was.
+  let light = false;
+  let levelBeforeLight = 0;
   // One pass per camera frame. requestAnimationFrame runs at the screen's rate (120 Hz on some
   // laptops), and a live video's currentTime moves on every time, so the fallback paces itself by the
   // camera's own frame rate instead.
@@ -585,6 +599,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
     const now = performance.now();
     if (video.videoWidth && (video.videoWidth !== videoW || video.videoHeight !== videoH)) fit();
     if (profile && typeof dev.__mirrorLevel === "number") governor.level = dev.__mirrorLevel;
+    if (light) governor.level = QUALITY_LEVELS.length - 1;
     const fresh = rvfc ? true : video.currentTime !== lastVideoTime && now - lastFrameAt >= 800 / cameraRate;
     if (video.readyState >= 2 && fresh) {
       lastVideoTime = video.currentTime;
@@ -648,6 +663,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         limbs: shapes.limbs,
         arms: shapes.arms,
         torso: shapes.torso,
+        core: shapes.core,
         skin,
         sceneLum,
         fill,
@@ -733,6 +749,12 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
     onStatus(cb) {
       listeners.add(cb);
       cb(status);
+    },
+    setLight(on) {
+      if (on === light) return;
+      light = on;
+      if (on) levelBeforeLight = governor.level;
+      else governor.level = levelBeforeLight;
     },
     stop() {
       stopped = true;

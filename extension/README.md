@@ -101,7 +101,9 @@ the arms. WebGL then draws the camera frame, takes off the person's own clothes 
 garment replaces them (matched by colour, so a top leaves the jeans alone) as skin or as the room
 behind, carries small gaps over with the garment's edge, puts the camera's folds on the new fabric,
 and keeps hands in front of it. "Make it real" saves the frame as the photo and starts an AI
-try-on. Add `#mirror-debug` to the panel's address to see the body mask instead.
+try-on; the mirror stays open (body tracking only, so a render on the same Mac gets the GPU) and
+then wears the render instead of the product photo (`fitted` in `lib/mirror/types.ts`). Add
+`#mirror-debug` to the panel's address to see the body mask instead.
 
 The two models run in Web Workers (`src/mirror/worker.ts`, `lib/mirror/lanes.ts`). The page sends a
 frame whenever a worker is free and draws every camera frame with the newest answers, so a slow

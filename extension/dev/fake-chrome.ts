@@ -183,7 +183,7 @@ async function fakeBackground(msg: AnyMessage): Promise<unknown> {
 
 const config = { mockApi: true, failWith: "", delayMs: 4000 };
 let mockQuota = 3;
-const jobs = new Map<string, { job: RenderJob; startedAt: number; person: string; garment: string; result?: string }>();
+const jobs = new Map<string, { job: RenderJob; startedAt: number; person: string; garment: string; result?: { dataUrl: string; preview: boolean } }>();
 
 const ERROR_STATUS: Record<string, number> = {
   quota_exhausted: 402,
@@ -253,7 +253,7 @@ function tag(ctx: OffscreenCanvasRenderingContext2D, width: number, height: numb
   ctx.fillText(text, x + pad, y + h * 0.68);
 }
 
-async function composite(person: string, garment: string): Promise<string> {
+async function composite(person: string, garment: string): Promise<{ dataUrl: string; preview: boolean }> {
   const real = await sampleRender(person, garment);
   if (real) {
     const r = await loadBitmap(real);
@@ -261,7 +261,7 @@ async function composite(person: string, garment: string): Promise<string> {
     const ctx = canvas.getContext("2d")!;
     ctx.drawImage(r, 0, 0);
     tag(ctx, r.width, r.height, "AI render · FASHN VTON 1.5", "rgba(46,125,79,.92)");
-    return blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 }));
+    return { dataUrl: await blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 })), preview: false };
   }
   // Not a sample pair: a quick paste so the flow still completes, clearly marked as not AI.
   const [p, g] = await Promise.all([loadBitmap(person), loadBitmap(garment)]);
@@ -284,7 +284,7 @@ async function composite(person: string, garment: string): Promise<string> {
   cctx.putImageData(px, 0, 0);
   ctx.drawImage(cut, (p.width - w) / 2, p.height * 0.2, w, h);
   tag(ctx, p.width, p.height, "Preview only · not an AI render", "rgba(59,31,74,.9)");
-  return blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 }));
+  return { dataUrl: await blobToDataUrl(await canvas.convertToBlob({ type: "image/jpeg", quality: 0.9 })), preview: true };
 }
 
 async function mockApi(method: string, path: string, body: unknown): Promise<Response> {
@@ -316,7 +316,7 @@ async function mockApi(method: string, path: string, body: unknown): Promise<Res
       return json(entry.job);
     }
     entry.result ??= await composite(entry.person, entry.garment);
-    entry.job = { ...entry.job, status: "completed", result_image: entry.result, ms: elapsed };
+    entry.job = { ...entry.job, status: "completed", result_image: entry.result.dataUrl, ms: elapsed, ...(entry.result.preview ? { preview: true } : {}) };
     return json(entry.job);
   }
   return apiError("not_found", 404);

@@ -19,7 +19,7 @@ The extension keeps these in Chrome's extension storage. The web page and the st
 
 ## The live mirror
 
-The live mirror shows your camera with the garment drawn on you. It runs entirely on your computer: the body tracking and the drawing happen in your browser, and camera frames aren't recorded, saved or sent anywhere. "Make it real" saves the frame on screen as your photo, and from then on it's treated like any photo you take or upload.
+The live mirror shows your camera with the garment drawn on you. It runs entirely on your computer: the body tracking and the drawing happen in your browser, and camera frames aren't recorded, saved or sent anywhere. "Make it real" saves the frame on screen as your photo, and from then on it's treated like any photo you take or upload. The AI result is kept in your browser like any other result, and the live mirror then draws it on you there; it isn't sent anywhere again.
 
 ## What we send, and when
 

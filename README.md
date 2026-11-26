@@ -3,7 +3,7 @@
 See clothes from any online store on you before you buy: live on your camera, or as an AI photo.
 
 [![Live demo](https://img.shields.io/badge/live%20demo-tryonlab.vercel.app-3b1f4a)](https://tryonlab.vercel.app)
-[![Tests](https://img.shields.io/badge/tests-302%20%2B%2029%20passing-2e7d4f)](#run-it)
+[![Tests](https://img.shields.io/badge/tests-303%20%2B%2029%20passing-2e7d4f)](#run-it)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](tsconfig.base.json)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3%20extension-4285f4)](extension)
 [![Cloudflare Workers](https://img.shields.io/badge/API-Cloudflare%20Workers-f38020)](api)
@@ -18,7 +18,7 @@ See clothes from any online store on you before you buy: live on your camera, or
 You're on a store page and you like a kurta. Click the Try-On icon and you get two ways to see it on you:
 
 - **Live mirror.** Your camera opens in the side panel and the garment appears on you. It follows your shoulders, arms and hips as you move, your own shirt is taken off where the new one doesn't cover it, and the light and folds of your real body show on the new fabric. It runs on your computer. Nothing from the camera leaves it.
-- **AI photo.** Press "Make it real" (or "Try it on" with a saved photo) and an AI model draws you wearing the garment. On a MacBook Pro M1 Pro that takes about two minutes, free, on the Mac itself.
+- **AI photo.** Press "Make it real" (or "Try it on" with a saved photo) and an AI model draws you wearing the garment. On a MacBook Pro M1 Pro that takes about two minutes, free, on the Mac itself. Made from the live mirror, the mirror then wears that AI version instead of the product photo, and it still follows you.
 
 Your photo and results stay in your browser.
 
@@ -47,7 +47,7 @@ On the device, for every camera frame:
 3. The cut-out is a mesh skinned to the body. Each point of it is tied to the torso and the nearest limb bones, so sleeves bend with your elbows and wrists and a skirt follows your legs.
 4. WebGL draws the frame. Your own clothes that the new garment replaces (picked out by colour, so a new top doesn't take your jeans) become skin on your body and the room behind loose fabric. Small gaps are covered by the garment's edge. Your hands stay in front of the garment when they're across your body.
 
-"Make it real" saves the current frame as your photo and starts the AI try-on from it.
+"Make it real" saves the current frame as your photo and makes the AI try-on from it (82 s for a Gymshark tee on the M1 Pro). The mirror stays open, tracking only your body while the AI has the GPU, and then wears the render instead of the product photo. The AI has already fitted the garment to your body, light and pose, so the sleeves, folds and length look worn rather than pasted on, and the product photo's own problems (an angled pose, hair over a shoulder, a light shirt on a white backdrop) stop mattering. It is still that one picture moving with you: turn sideways and it stays a front view.
 
 It is still a moving cut-out of the product photo, so it shows the garment from the front only, without cloth physics. See [Limitations](#limitations).
 
@@ -110,7 +110,7 @@ flowchart LR
 
 ## Features
 
-- Live mirror on your camera, on the device, from any product photo: skinned to your joints, your own clothes taken off, real light and folds, hands in front.
+- Live mirror on your camera, on the device, from any product photo, or after "Make it real" from the AI render of you: skinned to your joints, your own clothes taken off, real light and folds, hands in front.
 - On-demand "Try on" buttons on product images (in a closed Shadow DOM), a right-click menu, and drag-and-drop into the panel.
 - A garment image ladder that works on stores whose CDN blocks cross-origin reads, without asking for broad permissions.
 - Free AI renders on your own Mac (`vton-server`), with a one-person and body check before each render.
@@ -120,7 +120,7 @@ flowchart LR
 - Privacy notice and terms, a 90-day retention schedule run nightly, and server-side deletion from "Delete all my data".
 - Consent screen and 18+ check before any photo. Camera capture with a countdown, or upload.
 - API with HMAC install tokens, 3 free renders per install, a per-IP daily limit (the IP is stored only as an HMAC hash), a $5/day spend breaker per provider, and refunds when a provider fails.
-- 302 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
+- 303 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
 
 | The fitting room, before you start | A finished render, with feedback and download |
 |---|---|

@@ -457,6 +457,13 @@ function closeMirror(): void {
   $("mirror-btn").hidden = false;
 }
 
+/**
+ * AI renders of you made from the mirror ("Make it real"), by garment and category, for as long as the
+ * panel is open. The mirror wears these instead of the product photo: they already fit your body.
+ */
+const fittedRenders = new Map<string, string>();
+const fittedKey = (garmentId: string, category: string) => `${garmentId}|${category}`;
+
 async function syncMirrorGarment(): Promise<void> {
   if (!mirror) return;
   const g = ui.garment;
@@ -464,8 +471,12 @@ async function syncMirrorGarment(): Promise<void> {
     await mirror.setGarment(null);
     return;
   }
+  const category = mirrorCategory(selectedCategory(), g.categoryGuess);
+  const render = fittedRenders.get(fittedKey(g.id, category));
   try {
-    await mirror.setGarment({ dataUrl: g.dataUrl, category: mirrorCategory(selectedCategory(), g.categoryGuess), long: isLongTop(g.title) });
+    await mirror.setGarment(
+      render ? { dataUrl: render, category, long: isLongTop(g.title), fitted: true } : { dataUrl: g.dataUrl, category, long: isLongTop(g.title) },
+    );
   } catch (e) {
     setText("mirror-status", `This garment can't be shown live: ${errorText(e)}`);
   }
@@ -518,20 +529,34 @@ async function openMirror(): Promise<void> {
 }
 
 async function makeItReal(): Promise<void> {
-  if (!mirror || ui.rendering) return;
+  const session = mirror;
+  const g = ui.garment;
+  if (!session || !g || ui.rendering) return;
   const btn = $<HTMLButtonElement>("mirror-real");
   btn.disabled = true;
   try {
-    const shot = await mirror.snapshot();
+    const shot = await session.snapshot();
     const photo: PersonPhoto = { dataUrl: shot.dataUrl, width: shot.width, height: shot.height, source: "camera", createdAt: Date.now() };
     await storePersonPhoto(photo);
     ui.photo = photo;
     renderPhoto();
-    closeMirror(); // frees the camera and the GPU for the render
-    await tryOn();
+    const category = mirrorCategory(selectedCategory(), g.categoryGuess);
+    // The mirror stays open and draws only your body meanwhile: on a Mac the AI renders on the same GPU.
+    session.setLight(true);
+    const done = await tryOn(true);
+    // Then the mirror wears the render of you instead of the product photo (the demo's stand-in
+    // API only pastes the product on, so not that).
+    if (done && !done.preview) {
+      fittedRenders.set(fittedKey(g.id, category), done.record.resultDataUrl);
+      if (mirror === session && ui.garment?.id === g.id) {
+        await syncMirrorGarment();
+        toast("The mirror now shows the AI version on you. Move around: it follows you.", 6000);
+      }
+    }
   } catch (e) {
     toast(`Couldn't take the photo: ${errorText(e)}`);
   } finally {
+    session.setLight(false);
     btn.disabled = false;
   }
 }
@@ -870,7 +895,7 @@ function showTryError(e: unknown): void {
   if (code === "quota_exhausted") setQuota(0);
 }
 
-async function tryOn(): Promise<void> {
+async function tryOn(quiet = false): Promise<{ record: StoredResult; preview: boolean } | undefined> {
   if (ui.rendering) return;
   if (!ui.photo) {
     showScreen("photo");
@@ -909,8 +934,9 @@ async function tryOn(): Promise<void> {
       garmentThumb,
     };
     await setItem("local", KEYS.pendingRender, pending);
-    await finishRender(pending, job);
+    const done = await finishRender(pending, job, quiet);
     notifyStore("render_completed");
+    return done;
   } catch (e) {
     showTryError(e);
     notifyStore("render_failed");
@@ -923,7 +949,8 @@ async function tryOn(): Promise<void> {
   }
 }
 
-async function finishRender(p: PendingRender, initial?: RenderJob): Promise<void> {
+/** Polls a render to the end, saves and shows it. `quiet` keeps the panel's scroll where it is. */
+async function finishRender(p: PendingRender, initial?: RenderJob, quiet = false): Promise<{ record: StoredResult; preview: boolean }> {
   setProgress("Creating your look…", p.startedAt);
   const token = await ensureToken();
   const job = await api.pollRender(
@@ -953,7 +980,8 @@ async function finishRender(p: PendingRender, initial?: RenderJob): Promise<void
   await putResult(record);
   ui.results = [record, ...ui.results.filter((r) => r.id !== record.id)];
   renderHistory();
-  showResult(record);
+  showResult(record, !quiet);
+  return { record, preview: job.preview === true };
 }
 
 /** A render started before the panel was closed: keep polling it. */
@@ -979,7 +1007,7 @@ async function resumePending(): Promise<void> {
   }
 }
 
-function showResult(r: StoredResult): void {
+function showResult(r: StoredResult, scroll = true): void {
   ui.current = r;
   $("result").hidden = false;
   $<HTMLImageElement>("result-img").src = r.resultDataUrl;
@@ -987,7 +1015,7 @@ function showResult(r: StoredResult): void {
   $("result-meta").textContent = parts.filter(Boolean).join(" · ");
   $("fb-keep").setAttribute("aria-pressed", String(r.accepted === true));
   $("fb-no").setAttribute("aria-pressed", String(r.accepted === false));
-  $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (scroll) $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 async function feedback(accepted: boolean): Promise<void> {

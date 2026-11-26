@@ -8,6 +8,11 @@ export interface MirrorGarment {
   category: MirrorCategory;
   /** A long top (kurta, tunic): keep its full length instead of stopping near the hips. */
   long?: boolean;
+  /**
+   * The photo is an AI render of this person wearing the garment (made from a mirror frame), not the
+   * product photo: it already fits their body, light and pose, so it is drawn as it is, not widened.
+   */
+  fitted?: boolean;
 }
 
 export interface PreparedGarmentInfo {
@@ -36,6 +41,8 @@ export interface MirrorSession {
   /** The current camera frame, unmirrored, cropped to 3:4, without the garment (for an AI photo). */
   snapshot(): Promise<{ dataUrl: string; width: number; height: number }>;
   onStatus(cb: (s: MirrorStatus) => void): void;
+  /** While an AI render runs on this computer: body tracking only, so the GPU is free for the render. */
+  setLight(on: boolean): void;
   stop(): void;
 }
 

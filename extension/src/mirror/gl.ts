@@ -79,6 +79,8 @@ uniform vec4 uArm[2];
 uniform float uArmR[2];
 uniform int uArmN;
 uniform vec2 uTorso[4];
+uniform vec2 uCore[4];
+uniform bool uHasCore;
 uniform vec3 uSkin;
 uniform float uSceneLum;
 uniform vec2 uCenter;
@@ -108,10 +110,6 @@ bool inLimb(vec2 p) {
   for (int i = 0; i < 12; i++) { if (i >= uLimbN) break; if (segDist(p, uLimb[i].xy, uLimb[i].zw) < uLimbR[i]) return true; }
   return false;
 }
-bool inArm(vec2 p) {
-  for (int i = 0; i < 2; i++) { if (i >= uArmN) break; if (segDist(p, uArm[i].xy, uArm[i].zw) < uArmR[i]) return true; }
-  return false;
-}
 // The mask is a few frames old: look where this pixel's body was when the mask was made.
 float catAt(vec2 vuv) { return floor(texture(uMask, vuv - uMaskShift).r * 255.0 + 0.5); }
 // How surely old clothing is here or within a few pixels, 0..1. uClothes holds 1 where the segmenter
@@ -125,6 +123,33 @@ float clothesCover(vec2 vuv) {
   float wide = textureLod(uClothes, q, 3.0).r;
   float person = textureLod(uClothes, q, 1.0).g;
   return max(smoothstep(0.25, 0.75, near), smoothstep(0.05, 0.3, wide)) * smoothstep(0.2, 0.6, person);
+}
+float side(vec2 a, vec2 b, vec2 p) { return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x); }
+// Signed distance (px) to the torso between its joints (uCore): negative inside.
+float coreDist(vec2 p) {
+  if (!uHasCore) return 1e9;
+  float e = 1e9;
+  float lo = 1e9;
+  float hi = -1e9;
+  for (int i = 0; i < 4; i++) {
+    vec2 a = uCore[i], b = uCore[(i + 1) % 4];
+    e = min(e, segDist(p, a, b));
+    float s = side(a, b, p);
+    lo = min(lo, s);
+    hi = max(hi, s);
+  }
+  return lo >= 0.0 || hi <= 0.0 ? -e : e;
+}
+// How surely this pixel is a hand or forearm in front of the torso, 0..1: bare skin (uClothes blue)
+// inside a forearm capsule, inside the torso between its joints. Arms hanging at the sides are
+// outside that, so a wide garment drawn over them keeps its sleeves and sides.
+float handInFront(vec2 vuv, vec2 p) {
+  float inCore = 1.0 - smoothstep(-6.0, 2.0, coreDist(p));
+  if (inCore <= 0.0) return 0.0;
+  float arm = 0.0;
+  for (int i = 0; i < 2; i++) { if (i >= uArmN) break; arm = max(arm, 1.0 - smoothstep(uArmR[i] - 4.0, uArmR[i] + 2.0, segDist(p, uArm[i].xy, uArm[i].zw))); }
+  float skin = smoothstep(0.3, 0.7, texture(uClothes, vuv - uMaskShift).b);
+  return inCore * arm * skin;
 }
 // Signed distance (px) to the body parts this garment replaces (uTorso and uLimb): negative inside.
 float bodyDist(vec2 p) {
@@ -184,9 +209,11 @@ void main() {
     // A slightly blurred camera, so sensor noise doesn't flip single pixels.
     vec3 camSoft = textureLod(uVideo, vuv, 1.0).rgb;
     float same = uHasOld ? max(1.0 - smoothstep(0.24, 0.36, distance(camSoft, uOld)), 1.0 - smoothstep(0.16, 0.28, distance(blur, uOld))) : 1.0;
-    float free = 1.0 - smoothstep(0.35, 0.75, g.a);
-    float w = same * free;
-    if (w > 0.0) {
+    // No discount for the garment's own soft edge: what comes off is drawn under the garment, so it
+    // only shows where the garment lets it. Weakening it there too let the old shirt show through
+    // both, as a thin light line along the collar and shoulders.
+    float w = same;
+    if (g.a < 0.98 && w > 0.0) {
       float onBody = 1.0 - smoothstep(-5.0, 5.0, bodyDist(p));
       float cover = clothesCover(vuv);
       take = w * onBody * cover;
@@ -215,8 +242,8 @@ void main() {
     float fold = clamp(l / lb, 0.85, 1.15);
     gc *= mix(1.0, fold, 0.8);
     float a = g.a;
-    // A hand or forearm in front of the body stays in front of the garment.
-    if (cat == 2.0 && torsoW > 0.3 * g.a && inArm(p)) a = 0.0;
+    // A hand or forearm in front of the body stays in front of the garment's body (not its sleeves).
+    if (uHasMask) a *= 1.0 - handInFront(vuv, p) * smoothstep(0.2, 0.4, torsoW / max(g.a, 1e-3));
     color = mix(color, gc, a);
   }
   if (uDebug) {
@@ -261,8 +288,9 @@ export interface Capsule {
   r: number;
 }
 
-/** MediaPipe "selfie multiclass" categories: background and clothes. */
+/** MediaPipe "selfie multiclass" categories: background, body skin and clothes. */
 const BACKGROUND = 0;
+const BODY_SKIN = 2;
 const CLOTHES = 4;
 
 export interface FrameInput {
@@ -276,6 +304,8 @@ export interface FrameInput {
   limbs: Capsule[];
   arms: Capsule[];
   torso: Pt[] | null;
+  /** The torso between its joints, unwidened: where a forearm counts as a hand in front of the body. */
+  core?: Pt[] | null;
   skin: [number, number, number];
   sceneLum: number;
   fill: [number, number, number];
@@ -303,7 +333,7 @@ export class MirrorRenderer {
   private readonly compProg: WebGLProgram;
   private readonly videoTex: WebGLTexture;
   private readonly maskTex: WebGLTexture;
-  /** Red 255 where the mask says clothes, green where it sees the person; mipmapped (clothesCover in the shader). */
+  /** Red 255 where the mask says clothes, green where it sees the person, blue bare skin; mipmapped. */
   private readonly clothesTex: WebGLTexture;
   private clothes: Uint8Array = new Uint8Array(0);
   private lastMask: Uint8Array | null = null;
@@ -432,18 +462,19 @@ export class MirrorRenderer {
       // A new mask (a few a second): upload it, and the clothes map built from it.
       this.lastMask = f.mask;
       const n = f.maskWidth * f.maskHeight;
-      if (this.clothes.length !== 2 * n) this.clothes = new Uint8Array(2 * n);
+      if (this.clothes.length !== 4 * n) this.clothes = new Uint8Array(4 * n);
       for (let i = 0; i < n; i++) {
         const c = f.mask![i]!;
-        this.clothes[2 * i] = c === CLOTHES ? 255 : 0;
-        this.clothes[2 * i + 1] = c === BACKGROUND ? 0 : 255;
+        this.clothes[4 * i] = c === CLOTHES ? 255 : 0;
+        this.clothes[4 * i + 1] = c === BACKGROUND ? 0 : 255;
+        this.clothes[4 * i + 2] = c === BODY_SKIN ? 255 : 0;
       }
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, f.maskWidth, f.maskHeight, 0, gl.RED, gl.UNSIGNED_BYTE, f.mask);
       gl.bindTexture(gl.TEXTURE_2D, this.clothesTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, f.maskWidth, f.maskHeight, 0, gl.RG, gl.UNSIGNED_BYTE, this.clothes);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, f.maskWidth, f.maskHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.clothes);
       gl.generateMipmap(gl.TEXTURE_2D);
     }
 
@@ -530,6 +561,10 @@ export class MirrorRenderer {
     (f.torso ?? []).slice(0, 4).forEach((q, i) => torso.set([q.x, q.y], i * 2));
     gl.uniform2fv(u("uTorso"), torso);
     gl.uniform1i(u("uHasTorso"), f.torso && f.torso.length === 4 ? 1 : 0);
+    const core = new Float32Array(8);
+    (f.core ?? []).slice(0, 4).forEach((q, i) => core.set([q.x, q.y], i * 2));
+    gl.uniform2fv(u("uCore"), core);
+    gl.uniform1i(u("uHasCore"), f.core && f.core.length === 4 ? 1 : 0);
     gl.uniform3f(u("uSkin"), ...f.skin);
     gl.uniform1f(u("uSceneLum"), Math.max(0.05, f.sceneLum));
     const c = f.torso && f.torso.length ? f.torso.reduce((s, q) => ({ x: s.x + q.x / f.torso!.length, y: s.y + q.y / f.torso!.length }), { x: 0, y: 0 }) : { x: this.width / 2, y: this.height / 2 };

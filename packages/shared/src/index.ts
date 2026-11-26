@@ -61,6 +61,8 @@ export interface RenderJob {
   progress?: number;
   /** Place in the provider's queue while queued (1 = next), when known. */
   queue_position?: number;
+  /** Set only by the demo page's stand-in API: the result is a labelled paste, not an AI render. */
+  preview?: boolean;
 }
 
 /** Body of POST /v1/renders/:id/feedback. */
