@@ -107,7 +107,9 @@ The two models run in Web Workers (`src/mirror/worker.ts`, `lib/mirror/lanes.ts`
 frame whenever a worker is free and draws every camera frame with the newest answers, so a slow
 model costs freshness, not frame rate. Pose runs on the CPU and the segmenter on the GPU: Chrome puts
 every WebGL context through one GPU queue, and pose on the GPU waited behind each segmentation.
-Where workers can't run, both models run on the page. `lib/mirror/quality.ts` steps down (fewer
+Body points arrive 40-60 ms after their camera frame, so `lib/mirror/track.ts` smooths each one
+with a One Euro filter and carries it forward by its speed to the frame being drawn (not when it's
+still: there the speed is only jitter). Where workers can't run, both models run on the page. `lib/mirror/quality.ts` steps down (fewer
 masks, then no take-off, then pose only) when tracking or drawing falls behind the camera. With
 `#mirror-profile` in the address, `globalThis.__mirrorProfile` gets per-stage timings every second
 and a number in `globalThis.__mirrorLevel` pins a step.

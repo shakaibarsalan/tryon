@@ -3,7 +3,7 @@
 See clothes from any online store on you before you buy: live on your camera, or as an AI photo.
 
 [![Live demo](https://img.shields.io/badge/live%20demo-tryonlab.vercel.app-3b1f4a)](https://tryonlab.vercel.app)
-[![Tests](https://img.shields.io/badge/tests-293%20%2B%2029%20passing-2e7d4f)](#run-it)
+[![Tests](https://img.shields.io/badge/tests-299%20%2B%2029%20passing-2e7d4f)](#run-it)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178c6)](tsconfig.base.json)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3%20extension-4285f4)](extension)
 [![Cloudflare Workers](https://img.shields.io/badge/API-Cloudflare%20Workers-f38020)](api)
@@ -64,6 +64,8 @@ Measured on a MacBook Pro M1 Pro with a 30 fps camera (the AI sample model as a 
 
 When tracking falls behind the camera, the mirror steps down: fewer clothes masks, then it stops taking the old clothes off, then it tracks the body only. A webcam that is slow on its own, like 15 fps in a dim room, isn't mistaken for a slow computer.
 
+Body points reach the page 40-60 ms after their camera frame. So each point is smoothed and carried forward by its own speed to the frame being drawn, and left in place when you stand still, where its "speed" is only jitter. Replayed on recorded mirror runs, that put the garment 71-76% closer to a moving body than the plain average it replaced (3.6 px off instead of 12.6 at a brisk sway), and steadier when still.
+
 It hasn't been measured on a low-end laptop or a phone yet. Phones can't run Chrome extensions, so a phone uses the web page. A first visit there downloads about 24 MB (the MediaPipe runtime and two models). The camera shows while they load, and the browser keeps them afterwards. The extension has them built in.
 
 ## AI photos on your own Mac
@@ -118,7 +120,7 @@ flowchart LR
 - Privacy notice and terms, a 90-day retention schedule run nightly, and server-side deletion from "Delete all my data".
 - Consent screen and 18+ check before any photo. Camera capture with a countdown, or upload.
 - API with HMAC install tokens, 3 free renders per install, a per-IP daily limit (the IP is stored only as an HMAC hash), a $5/day spend breaker per provider, and refunds when a provider fails.
-- 293 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
+- 299 TypeScript tests across the four packages and 29 Python tests for the render server. Also a CORS matrix tool, a blind-rating eval harness, and an end-to-end script that drives real Chrome on live stores.
 
 | The fitting room, before you start | A finished render, with feedback and download |
 |---|---|
@@ -220,7 +222,7 @@ docs/                Privacy notice and terms, CORS results, provider research, 
 - FASHN VTON 1.5 is Apache-2.0, but its human parser uses NVIDIA's non-commercial SegFormer licence, so the self-hosted provider is for personal and non-commercial use until the parser is swapped.
 - Sign-in is built and tested, but it needs a Google OAuth client id (free) to switch on.
 - The API isn't deployed, so the hosted demo answers AI photos in the page. The Chrome Web Store zip is ready but not submitted.
-- The garment trails the body a little when you move fast: body tracking smooths its points, and in a worker it is a frame or two behind the camera.
+- The mirror predicts where a moving body is going, so if you stop suddenly the garment can run on a little past you for a moment.
 - With the MediaPipe models the extension is about 37 MB.
 - Images inside cross-origin iframes aren't detected, and the screenshot fallback only works while the image is on screen.
 
