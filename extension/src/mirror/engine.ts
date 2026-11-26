@@ -172,6 +172,13 @@ async function startLanes(video: HTMLVideoElement): Promise<Lanes & { where: str
   };
 }
 
+/** Middle of the shoulders and hips that are in view (two at least). */
+function torsoCentre(a: Anchors): Pt | null {
+  const pts = [a.ls, a.rs, a.lh, a.rh].filter((p): p is Pt => !!p);
+  if (pts.length < 2) return null;
+  return { x: pts.reduce((s, p) => s + p.x, 0) / pts.length, y: pts.reduce((s, p) => s + p.y, 0) / pts.length };
+}
+
 function anchorsFrom(lm: Landmark[] | undefined, map: (p: Landmark) => Pt): Anchors {
   const out: Anchors = {};
   if (!lm) return out;
@@ -463,6 +470,13 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
   let oldColour: [number, number, number] | null = null;
   let fill: [number, number, number] = [0.85, 0.85, 0.85];
   let sceneLum = 0.5;
+  // The mask is a few frames old; maskShift is how far the body has moved since (crop pixels).
+  let maskShift: Pt = { x: 0, y: 0 };
+  const maskAtVideo = (m: Uint8Array, vx: number, vy: number): number => {
+    const x = Math.floor((vx - maskShift.x / videoW) * maskW);
+    const y = Math.floor((vy - maskShift.y / videoH) * maskH);
+    return x < 0 || y < 0 || x >= maskW || y >= maskH ? -1 : m[y * maskW + x]!;
+  };
   const sample = (mask: Uint8Array | null) => {
     pctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, probe.width, probe.height);
     const px = pctx.getImageData(0, 0, probe.width, probe.height).data;
@@ -477,7 +491,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         if (!mask) continue;
         const vx = (crop.sx + ((i + 0.5) / probe.width) * crop.sw) / videoW;
         const vy = (crop.sy + ((j + 0.5) / probe.height) * crop.sh) / videoH;
-        const cat = mask[Math.floor(vy * maskH) * maskW + Math.floor(vx * maskW)];
+        const cat = maskAtVideo(mask, vx, vy);
         const acc = cat === 2 || cat === 3 ? skinAcc : cat === 0 ? bgAcc : null;
         if (acc) {
           acc[0]! += r;
@@ -501,7 +515,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
           if (i < 0 || j < 0 || i >= probe.width || j >= probe.height) continue;
           const vx = (crop.sx + ((i + 0.5) / probe.width) * crop.sw) / videoW;
           const vy = (crop.sy + ((j + 0.5) / probe.height) * crop.sh) / videoH;
-          if (mask[Math.floor(vy * maskH) * maskW + Math.floor(vx * maskW)] !== CLOTHES) continue;
+          if (maskAtVideo(mask, vx, vy) !== CLOTHES) continue;
           const k = (j * probe.width + i) * 4;
           old[0]! += px[k]! / 255;
           old[1]! += px[k + 1]! / 255;
@@ -522,6 +536,9 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
 
   // Smooths the body points and carries them forward to the frame being drawn (lib/mirror/track.ts).
   const tracker = new AnchorTracker();
+  // Torso centre as drawn in the last second of frames: the segmenter's mask is 50-150 ms old, so it
+  // is moved by how far the body went since its frame, or the old clothes come off where the body was.
+  const drawn: { t: number; x: number; y: number }[] = [];
   let garment: PreparedGarment | null = null;
   let garmentToken = 0;
   let preparing = false;
@@ -594,6 +611,11 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
       }
       // Where the body is now: the newest answer is for a frame taken a little earlier.
       target = tracker.at(now);
+      const centre = torsoCentre(target);
+      if (centre) drawn.push({ t: now, ...centre });
+      while (drawn.length && drawn[0]!.t < now - 1000) drawn.shift();
+      const then = centre ? drawn.find((d) => d.t === maskAt) : undefined;
+      maskShift = centre && then ? { x: centre.x - then.x, y: centre.y - then.y } : { x: 0, y: 0 };
       if (trace) {
         trace.width = crop.sw;
         trace.height = crop.sh;
@@ -626,6 +648,7 @@ async function start(o: { canvas: HTMLCanvasElement; stream: MediaStream; assetB
         fill,
         mirrored,
         takeOff: level.takeOff && liveMask !== null,
+        maskShift,
       });
       if (profile) {
         t = lap("draw", t);

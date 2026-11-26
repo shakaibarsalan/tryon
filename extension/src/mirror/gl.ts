@@ -19,12 +19,13 @@ in vec2 vUv;
 uniform sampler2D uVideo, uMask, uPrev;
 uniform vec4 uCrop;
 uniform bool uInit, uHasMask;
+uniform vec2 uMaskShift; // the body's move since the mask's camera frame (video uv)
 uniform vec3 uFill;
 out vec4 o;
 void main() {
   vec2 vuv = uCrop.xy + vUv * uCrop.zw;
   vec3 cam = texture(uVideo, vuv).rgb;
-  float cat = uHasMask ? floor(texture(uMask, vuv).r * 255.0 + 0.5) : 9.0;
+  float cat = uHasMask ? floor(texture(uMask, vuv - uMaskShift).r * 255.0 + 0.5) : 9.0;
   vec3 prev = uInit ? uFill : texture(uPrev, vec2(vUv.x, 1.0 - vUv.y)).rgb;
   // Only where this pixel and its neighbours are all background: the mask lags a moving person by
   // a frame, and taking their edges into the plate leaves smears.
@@ -32,7 +33,7 @@ void main() {
   bool bg = cat < 0.5;
   for (int i = 0; i < 4 && bg; i++) {
     vec2 off = i == 0 ? vec2(d.x, 0.0) : i == 1 ? vec2(-d.x, 0.0) : i == 2 ? vec2(0.0, d.y) : vec2(0.0, -d.y);
-    bg = floor(texture(uMask, vuv + off).r * 255.0 + 0.5) < 0.5;
+    bg = floor(texture(uMask, vuv - uMaskShift + off).r * 255.0 + 0.5) < 0.5;
   }
   o = vec4(bg ? mix(prev, cam, 0.12) : prev, 1.0);
 }`;
@@ -70,6 +71,7 @@ uniform sampler2D uVideo, uMask, uPlate, uLayer, uAux;
 uniform vec4 uCrop;
 uniform vec2 uSize;
 uniform bool uMirror, uTakeOff, uGarmentOn, uHasMask, uHasTorso;
+uniform vec2 uMaskShift;
 uniform vec4 uLimb[12];
 uniform float uLimbR[12];
 uniform int uLimbN;
@@ -110,7 +112,8 @@ bool inArm(vec2 p) {
   for (int i = 0; i < 2; i++) { if (i >= uArmN) break; if (segDist(p, uArm[i].xy, uArm[i].zw) < uArmR[i]) return true; }
   return false;
 }
-float catAt(vec2 vuv) { return floor(texture(uMask, vuv).r * 255.0 + 0.5); }
+// The mask is a few frames old: look where this pixel's body was when the mask was made.
+float catAt(vec2 vuv) { return floor(texture(uMask, vuv - uMaskShift).r * 255.0 + 0.5); }
 // Old clothes here or within a few pixels: the segmenter's mask is coarse, and an undilated test
 // leaves a thin fringe of the old shirt around the new garment.
 bool oldClothes(vec2 vuv) {
@@ -250,6 +253,8 @@ export interface FrameInput {
   debug?: boolean;
   /** Colour of the person's own garment that the new one replaces, when known (0..1). */
   oldColour?: [number, number, number] | null;
+  /** How far the body moved (crop pixels) since the camera frame the mask was made from. */
+  maskShift?: Pt;
 }
 
 export interface MeshData {
@@ -407,6 +412,8 @@ export class MirrorRenderer {
     gl.uniform1i(gl.getUniformLocation(this.plateProg, "uInit"), this.plateReady ? 0 : 1);
     gl.uniform1i(gl.getUniformLocation(this.plateProg, "uHasMask"), hasMask ? 1 : 0);
     gl.uniform3f(gl.getUniformLocation(this.plateProg, "uFill"), ...f.fill);
+    const shift: [number, number] = f.maskShift && vw && vh ? [f.maskShift.x / vw, f.maskShift.y / vh] : [0, 0];
+    gl.uniform2f(gl.getUniformLocation(this.plateProg, "uMaskShift"), ...shift);
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     this.plateIndex = next;
@@ -448,6 +455,7 @@ export class MirrorRenderer {
     gl.uniform1i(u("uTakeOff"), f.takeOff ? 1 : 0);
     gl.uniform1i(u("uGarmentOn"), garmentOn ? 1 : 0);
     gl.uniform1i(u("uHasMask"), hasMask ? 1 : 0);
+    gl.uniform2f(u("uMaskShift"), ...shift);
     const limbs = new Float32Array(48);
     const limbR = new Float32Array(12);
     f.limbs.slice(0, 12).forEach((c, i) => {
